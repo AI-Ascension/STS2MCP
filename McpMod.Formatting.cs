@@ -25,18 +25,6 @@ public static partial class McpMod
             sb.AppendLine();
         }
 
-        if (stateType == "menu")
-        {
-            FormatMenuMarkdown(sb, state);
-            return sb.ToString();
-        }
-
-        if (stateType == "game_over")
-        {
-            FormatGameOverMarkdown(sb, state);
-            return sb.ToString();
-        }
-
         if (state.TryGetValue("message", out var msg) && msg != null)
         {
             sb.AppendLine(msg.ToString());
@@ -52,41 +40,9 @@ public static partial class McpMod
             {
                 string youTag = p["is_local"] is true ? " **(YOU)**" : "";
                 string aliveTag = p["is_alive"] is false ? " [DEAD]" : "";
-                string readyTag = p.TryGetValue("is_ready_to_end_turn", out var rdy) && rdy is true ? " [READY]" : "";
-                sb.AppendLine($"- **{p["character"]}**{youTag}{aliveTag}{readyTag} - HP: {p["hp"]}/{p["max_hp"]} | Gold: {p["gold"]}");
-
-                // Show teammate pets inline
-                if (p.TryGetValue("pets", out var tPetsObj) && tPetsObj is List<Dictionary<string, object?>> tPets)
-                {
-                    foreach (var pet in tPets)
-                    {
-                        bool petAlive = pet.TryGetValue("alive", out var pa) && pa is true;
-                        string petStatus = petAlive
-                            ? $"HP: {pet["hp"]}/{pet["max_hp"]} | Block: {pet["block"]}"
-                            : "DEAD";
-                        sb.AppendLine($"  - Pet: **{pet["name"]}** - {petStatus}");
-                    }
-                }
+                sb.AppendLine($"- **{p["character"]}**{youTag}{aliveTag} — HP: {p["hp"]}/{p["max_hp"]} | Gold: {p["gold"]}");
             }
             sb.AppendLine();
-        }
-
-        // Top-level player summary (non-combat singleplayer only; combat renders its own detailed view)
-        bool hasBattle = state.ContainsKey("battle");
-        if (!isMultiplayer && !hasBattle
-            && state.TryGetValue("player", out var topPlayerObj) && topPlayerObj is Dictionary<string, object?> topPlayer)
-        {
-            sb.AppendLine("## Player (You)");
-            string stars = topPlayer.TryGetValue("stars", out var s) && s != null ? $" | Stars: {s}" : "";
-            sb.AppendLine($"**{topPlayer["character"]}** — HP: {topPlayer["hp"]}/{topPlayer["max_hp"]} | Gold: {topPlayer["gold"]}{stars}");
-            sb.AppendLine();
-
-            FormatListSection(sb, "Relics", topPlayer, "relics", r =>
-            {
-                string counter = r.TryGetValue("counter", out var c) && c != null ? $" [{c}]" : "";
-                return $"- **{r["name"]}**{counter}: {r["description"]}";
-            });
-            FormatListSection(sb, "Potions", topPlayer, "potions", p => $"- [{p["slot"]}] **{p["name"]}**: {p["description"]}");
         }
 
         if (state.TryGetValue("battle", out var battleObj) && battleObj is Dictionary<string, object?> battle)
@@ -94,10 +50,7 @@ public static partial class McpMod
             if (isMultiplayer)
                 FormatMultiplayerBattleMarkdown(sb, battle);
             else
-            {
-                var battlePlayer = state.TryGetValue("player", out var bp) && bp is Dictionary<string, object?> bpd ? bpd : null;
-                FormatBattleMarkdown(sb, battle, battlePlayer);
-            }
+                FormatBattleMarkdown(sb, battle);
         }
 
         if (state.TryGetValue("event", out var eventObj) && eventObj is Dictionary<string, object?> eventData)
@@ -115,11 +68,6 @@ public static partial class McpMod
         if (state.TryGetValue("shop", out var shopObj) && shopObj is Dictionary<string, object?> shopData)
         {
             FormatShopMarkdown(sb, shopData);
-        }
-
-        if (state.TryGetValue("fake_merchant", out var fmObj) && fmObj is Dictionary<string, object?> fmData)
-        {
-            FormatFakeMerchantMarkdown(sb, fmData);
         }
 
         if (state.TryGetValue("map", out var mapObj) && mapObj is Dictionary<string, object?> mapData)
@@ -178,7 +126,7 @@ public static partial class McpMod
             sb.AppendLine();
         }
 
-        // Keyword glossary - collect all unique keyword definitions
+        // Keyword glossary — collect all unique keyword definitions
         var glossary = new Dictionary<string, string>();
         CollectKeywordsFromState(state, glossary);
         if (glossary.Count > 0)
@@ -192,29 +140,25 @@ public static partial class McpMod
         return sb.ToString();
     }
 
-    private static void FormatBattleMarkdown(StringBuilder sb, Dictionary<string, object?> battle, Dictionary<string, object?>? player)
+    private static void FormatBattleMarkdown(StringBuilder sb, Dictionary<string, object?> battle)
     {
-        var screen = state.TryGetValue("menu_screen", out var ms) ? ms?.ToString() ?? "main" : "main";
-        sb.AppendLine($"## Menu: {screen}");
-
-        if (state.TryGetValue("message", out var msg) && msg != null)
-            sb.AppendLine(msg.ToString());
+        sb.AppendLine($"**Round {battle["round"]}** | Turn: {battle["turn"]} | Play Phase: {battle["is_play_phase"]}");
         sb.AppendLine();
 
-        if (player != null)
+        if (battle.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
         {
             sb.AppendLine("## Player (You)");
             string stars = player.TryGetValue("stars", out var s) && s != null ? $" | Stars: {s}" : "";
-            sb.AppendLine($"**{player["character"]}** - HP: {player["hp"]}/{player["max_hp"]} | Block: {player["block"]} | Energy: {player["energy"]}/{player["max_energy"]}{stars} | Gold: {player["gold"]}");
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Block: {player["block"]} | Energy: {player["energy"]}/{player["max_energy"]}{stars} | Gold: {player["gold"]}");
             sb.AppendLine();
 
             FormatListSection(sb, "Status", player, "status", p => $"- **{p["name"]}** ({FormatStatusAmount(p["amount"])}): {p["description"]}");
             FormatListSection(sb, "Relics", player, "relics", r =>
             {
                 string counter = r.TryGetValue("counter", out var c) && c != null ? $" [{c}]" : "";
-                return $"- {FormatRelicDetails(r, counter)}";
+                return $"- **{r["name"]}**{counter}: {r["description"]}";
             });
-            FormatPotionsSection(sb, player);
+            FormatListSection(sb, "Potions", player, "potions", p => $"- [{p["slot"]}] **{p["name"]}**: {p["description"]}");
 
             if (player.TryGetValue("hand", out var handObj) && handObj is List<Dictionary<string, object?>> hand && hand.Count > 0)
             {
@@ -222,7 +166,10 @@ public static partial class McpMod
                 foreach (var card in hand)
                 {
                     string playable = card["can_play"] is true ? "✓" : "✗";
-                    sb.AppendLine($"- [{card["index"]}] {FormatCardDetails(card, includeTarget: true)} {playable}");
+                    string keywords = card.TryGetValue("keywords", out var kw) && kw is List<string> kwList && kwList.Count > 0
+                        ? $" [{string.Join(", ", kwList)}]" : "";
+                    string starCost = card.TryGetValue("star_cost", out var sc) && sc != null ? $" + {sc} star" : "";
+                    sb.AppendLine($"- [{card["index"]}] **{card["name"]}** ({card["cost"]} energy{starCost}) [{card["type"]}] {playable}{keywords} — {card["description"]} (target: {card["target_type"]})");
                 }
                 sb.AppendLine();
             }
@@ -236,15 +183,13 @@ public static partial class McpMod
                 sb.AppendLine($"### Orbs ({orbs.Count}/{slots} slots)");
                 foreach (var orb in orbs)
                 {
-                    string desc = orb.TryGetValue("description", out var d) && d != null ? $" - {d}" : "";
+                    string desc = orb.TryGetValue("description", out var d) && d != null ? $" — {d}" : "";
                     sb.AppendLine($"- **{orb["name"]}** (passive: {orb["passive_val"]}, evoke: {orb["evoke_val"]}){desc}");
                 }
                 if (empty > 0)
                     sb.AppendLine($"- *{empty} empty slot(s)*");
                 sb.AppendLine();
             }
-
-            FormatPetsMarkdown(sb, player);
         }
 
         if (battle.TryGetValue("enemies", out var enemiesObj) && enemiesObj is List<Dictionary<string, object?>> enemies && enemies.Count > 0)
@@ -279,90 +224,35 @@ public static partial class McpMod
         sb.AppendLine("### Deck Information");
         sb.AppendLine();
 
-        FormatPileMarkdown(sb, player, "deck", "deck_count", "Run Deck");
-        FormatPileMarkdown(sb, player, "draw_pile", "draw_pile_count", "Draw Pile", " sorted by rarity");
-        FormatPileMarkdown(sb, player, "discard_pile", "discard_pile_count", "Discard Pile");
-        FormatPileMarkdown(sb, player, "exhaust_pile", "exhaust_pile_count", "Exhaust Pile");
-    }
-
-    private static void FormatPetsMarkdown(StringBuilder sb, Dictionary<string, object?> player)
-    {
-        if (!player.TryGetValue("pets", out var petsObj)
-            || petsObj is not List<Dictionary<string, object?>> pets
-            || pets.Count == 0)
-            return;
-
-        sb.AppendLine("### Pets");
-        foreach (var pet in pets)
+        sb.AppendLine($"#### Draw Pile ({player["draw_pile_count"]} cards, in random order)");
+        if (player.TryGetValue("draw_pile", out var drawObj) && drawObj is List<Dictionary<string, object?>> drawPile && drawPile.Count > 0)
         {
-            bool alive = pet.TryGetValue("alive", out var a) && a is true;
-            string status = alive
-                ? $"HP: {pet["hp"]}/{pet["max_hp"]} | Block: {pet["block"]}"
-                : "DEAD";
-            sb.AppendLine($"- **{pet["name"]}** (`{pet["id"]}`) - {status}");
-            if (alive && pet.TryGetValue("status", out var statusObj)
-                && statusObj is List<Dictionary<string, object?>> statusList && statusList.Count > 0)
-            {
-                sb.AppendLine("  **Status**");
-                foreach (var p in statusList)
-                    sb.AppendLine($"  - **{p["name"]}** ({FormatStatusAmount(p["amount"])}): {p["description"]}");
-            }
-        }
-        sb.AppendLine();
-    }
-
-    private static void FormatPileMarkdown(StringBuilder sb, Dictionary<string, object?> player,
-        string pileKey, string countKey, string label, string suffix = "")
-    {
-        sb.AppendLine($"#### {label} ({player[countKey]} cards{(suffix.Length > 0 ? "," : "")}{suffix})");
-        if (player.TryGetValue(pileKey, out var pileObj) && pileObj is List<Dictionary<string, object?>> pile && pile.Count > 0)
-        {
-            foreach (var card in pile)
-                sb.AppendLine($"- {FormatCardDetails(card, energyLabel: false)}");
+            foreach (var card in drawPile)
+                sb.AppendLine($"- {card["name"]}: {card["description"]}");
         }
         else
             sb.AppendLine("- *(empty)*");
         sb.AppendLine();
-    }
 
-    private static string FormatUpgradeMarker(Dictionary<string, object?> card)
-        => card.TryGetValue("is_upgraded", out var upgraded) && upgraded is true ? "+" : "";
+        sb.AppendLine($"#### Discard Pile ({player["discard_pile_count"]} cards)");
+        if (player.TryGetValue("discard_pile", out var discardObj) && discardObj is List<Dictionary<string, object?>> discardPile && discardPile.Count > 0)
+        {
+            foreach (var card in discardPile)
+                sb.AppendLine($"- {card["name"]}: {card["description"]}");
+        }
+        else
+            sb.AppendLine("- *(empty)*");
+        sb.AppendLine();
 
-    private static string FormatCardDetails(Dictionary<string, object?> card, bool includeTarget = false, bool energyLabel = true)
-    {
-        string upgraded = FormatUpgradeMarker(card);
-        string cost = card.TryGetValue("cost", out var c) && c != null ? c.ToString()! : "?";
-        string energy = energyLabel ? " energy" : "";
-        string starCost = card.TryGetValue("star_cost", out var sc) && sc != null ? $" + {sc} star" : "";
-        string type = card.TryGetValue("type", out var t) && t != null ? $" [{t}]" : "";
-        string rarity = card.TryGetValue("rarity", out var r) && r != null ? $" {r}" : "";
-        string keywords = FormatKeywordNames(card);
-        string description = card.TryGetValue("description", out var d) && d != null ? $" - {d}" : "";
-        string target = includeTarget && card.TryGetValue("target_type", out var targetObj) && targetObj != null
-            ? $" (target: {targetObj})"
-            : "";
-        return $"**{card.GetValueOrDefault("name")}**{upgraded} ({cost}{energy}{starCost}){type}{rarity}{keywords}{description}{target}";
-    }
-
-    private static string FormatRelicDetails(Dictionary<string, object?> relic, string nameSuffix = "")
-    {
-        string rarity = relic.TryGetValue("rarity", out var r) && r != null ? $" {r}" : "";
-        string keywords = FormatKeywordNames(relic);
-        string description = relic.TryGetValue("description", out var d) && d != null ? $" - {d}" : "";
-        return $"**{relic.GetValueOrDefault("name")}**{nameSuffix}{rarity}{keywords}{description}";
-    }
-
-    private static string FormatKeywordNames(Dictionary<string, object?> item)
-    {
-        if (!item.TryGetValue("keywords", out var kw) || kw is not List<Dictionary<string, object?>> keywords || keywords.Count == 0)
-            return "";
-
-        var names = keywords
-            .Select(keyword => keyword.TryGetValue("name", out var name) ? name?.ToString() : null)
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .ToList();
-
-        return names.Count > 0 ? $" [{string.Join(", ", names)}]" : "";
+        sb.AppendLine($"#### Exhaust Pile ({player["exhaust_pile_count"]} cards)");
+        if (player.TryGetValue("exhaust_pile", out var exhaustObj) && exhaustObj is List<Dictionary<string, object?>> exhaustPile && exhaustPile.Count > 0)
+        {
+            foreach (var card in exhaustPile)
+                sb.AppendLine($"- {card["name"]}: {card["description"]}");
+        }
+        else
+            sb.AppendLine("- *(empty)*");
+        sb.AppendLine();
     }
 
     private static void FormatEventMarkdown(StringBuilder sb, Dictionary<string, object?> evt)
@@ -372,10 +262,16 @@ public static partial class McpMod
         sb.AppendLine($"## {(isAncient ? "Ancient" : "Event")}: {name}");
         sb.AppendLine();
 
+        if (evt.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
+            sb.AppendLine();
+        }
+
         bool inDialogue = evt.TryGetValue("in_dialogue", out var d) && d is true;
         if (inDialogue)
         {
-            sb.AppendLine("*Ancient dialogue in progress - use `advance_dialogue` to continue.*");
+            sb.AppendLine("*Ancient dialogue in progress — use `advance_dialogue` to continue.*");
             sb.AppendLine();
             return;
         }
@@ -391,7 +287,7 @@ public static partial class McpMod
 
                 string tag = locked ? " (LOCKED)" : chosen ? " (CHOSEN)" : proceed ? " (PROCEED)" : "";
                 string relic = opt.TryGetValue("relic_name", out var rn) && rn != null ? $" [Relic: {rn}]" : "";
-                sb.AppendLine($"- [{opt["index"]}] **{opt["title"]}**{tag}{relic} - {opt["description"]}");
+                sb.AppendLine($"- [{opt["index"]}] **{opt["title"]}**{tag}{relic} — {opt["description"]}");
             }
             sb.AppendLine();
         }
@@ -404,13 +300,20 @@ public static partial class McpMod
 
     private static void FormatRestSiteMarkdown(StringBuilder sb, Dictionary<string, object?> restSite)
     {
+        if (restSite.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine("## Player (You)");
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
+            sb.AppendLine();
+        }
+
         if (restSite.TryGetValue("options", out var optObj) && optObj is List<Dictionary<string, object?>> options && options.Count > 0)
         {
             sb.AppendLine("## Rest Site Options");
             foreach (var opt in options)
             {
                 string enabled = opt["is_enabled"] is true ? "" : " (DISABLED)";
-                sb.AppendLine($"- [{opt["index"]}] **{opt["name"]}**{enabled} - {opt["description"]}");
+                sb.AppendLine($"- [{opt["index"]}] **{opt["name"]}**{enabled} — {opt["description"]}");
             }
             sb.AppendLine();
         }
@@ -422,6 +325,13 @@ public static partial class McpMod
 
     private static void FormatShopMarkdown(StringBuilder sb, Dictionary<string, object?> shop)
     {
+        if (shop.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine("## Player (You)");
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]} | Potion slots: {player["open_potion_slots"]}/{player["potion_slots"]} open");
+            sb.AppendLine();
+        }
+
         if (shop.TryGetValue("items", out var itemsObj) && itemsObj is List<Dictionary<string, object?>> items)
         {
             sb.AppendLine("## Shop Inventory");
@@ -438,36 +348,19 @@ public static partial class McpMod
 
                 bool stocked = item["is_stocked"] is true;
                 bool afford = item["can_afford"] is true;
-                string priceTag = stocked ? $"{item["price"]}g" : "SOLD";
+                string costTag = stocked ? $"{item["cost"]}g" : "SOLD";
                 string affordTag = stocked && !afford ? " (can't afford)" : "";
                 string saleTag = item.TryGetValue("on_sale", out var os) && os is true ? " **SALE**" : "";
 
-                string cardCost = item.TryGetValue("card_cost", out var cc) && cc != null ? cc.ToString()! : "";
-                string cardStarCost = item.TryGetValue("card_star_cost", out var csc) && csc != null ? $" + {csc} star" : "";
-                string cardEnergy = cardCost != "" ? $" ({cardCost} energy{cardStarCost})" : "";
-                string cardUpgrade = "";
-                if (category == "card"
-                    && item.TryGetValue("card_upgrade_preview_description", out var upgradeDesc)
-                    && upgradeDesc != null
-                    && !Equals(upgradeDesc, item.GetValueOrDefault("card_description")))
-                {
-                    string upgradeCost = item.TryGetValue("card_upgrade_preview_cost", out var uc) && uc != null ? uc.ToString()! : "";
-                    string upgradeStar = item.TryGetValue("card_upgrade_preview_star_cost", out var usc) && usc != null ? $" + {usc} star" : "";
-                    string upgradeEnergy = upgradeCost != "" ? $"({upgradeCost} energy{upgradeStar})" : "";
-                    cardUpgrade = upgradeEnergy != ""
-                        ? $" | Upgrade: {upgradeEnergy} {upgradeDesc}"
-                        : $" | Upgrade: {upgradeDesc}";
-                }
-                string itemKeywords = FormatKeywordNames(item);
                 string desc = category switch
                 {
-                    "card" => $"**{item.GetValueOrDefault("card_name")}**{(item.GetValueOrDefault("card_is_upgraded") is true ? "+" : "")}{cardEnergy} [{item.GetValueOrDefault("card_type")}] {item.GetValueOrDefault("card_rarity")}{itemKeywords} - {item.GetValueOrDefault("card_description")}{cardUpgrade}",
-                    "relic" => $"**{item.GetValueOrDefault("relic_name")}** {item.GetValueOrDefault("relic_rarity")}{itemKeywords} - {item.GetValueOrDefault("relic_description")}",
-                    "potion" => $"**{item.GetValueOrDefault("potion_name")}** {item.GetValueOrDefault("potion_rarity")} ({item.GetValueOrDefault("potion_usage")}, target: {item.GetValueOrDefault("potion_target_type")}){itemKeywords} - {item.GetValueOrDefault("potion_description")}",
+                    "card" => $"**{item.GetValueOrDefault("card_name")}** [{item.GetValueOrDefault("card_type")}] {item.GetValueOrDefault("card_rarity")} — {item.GetValueOrDefault("card_description")}",
+                    "relic" => $"**{item.GetValueOrDefault("relic_name")}** — {item.GetValueOrDefault("relic_description")}",
+                    "potion" => $"**{item.GetValueOrDefault("potion_name")}** — {item.GetValueOrDefault("potion_description")}",
                     "card_removal" => "**Remove a card** from your deck",
                     _ => "Unknown item"
                 };
-                sb.AppendLine($"- [{item["index"]}] {desc} - {priceTag}{saleTag}{affordTag}");
+                sb.AppendLine($"- [{item["index"]}] {desc} — {costTag}{saleTag}{affordTag}");
             }
             sb.AppendLine();
         }
@@ -477,8 +370,16 @@ public static partial class McpMod
         sb.AppendLine();
     }
 
-    private static void FormatFakeMerchantMarkdown(StringBuilder sb, Dictionary<string, object?> fm)
+    private static void FormatMapMarkdown(StringBuilder sb, Dictionary<string, object?> map)
     {
+        // Player summary
+        if (map.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine("## Player (You)");
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]} | Potion slots: {player["open_potion_slots"]}/{player["potion_slots"]} open");
+            sb.AppendLine();
+        }
+
         // Path taken
         if (map.TryGetValue("visited", out var visitedObj) && visitedObj is List<Dictionary<string, object?>> visited && visited.Count > 0)
         {
@@ -488,24 +389,16 @@ public static partial class McpMod
             sb.AppendLine();
         }
 
-        // Build node lookup for path traversal
-        var nodeLookup = new Dictionary<string, Dictionary<string, object?>>();
-        if (map.TryGetValue("nodes", out var nodesObj) && nodesObj is List<Dictionary<string, object?>> nodes)
-        {
-            foreach (var node in nodes)
-                nodeLookup[$"{node["col"]},{node["row"]}"] = node;
-        }
-
-        // Next options with future path trees
+        // Next options — the key decision section
         if (map.TryGetValue("next_options", out var optObj) && optObj is List<Dictionary<string, object?>> options && options.Count > 0)
         {
             sb.AppendLine("## Choose Next Node");
             foreach (var opt in options)
             {
-                sb.AppendLine($"- [{opt["index"]}] **{opt["type"]}** ({opt["col"]},{opt["row"]})");
-                string tree = BuildFuturePathTree(opt, nodeLookup);
-                if (tree.Length > 0)
-                    sb.AppendLine($"  Future paths: {tree}");
+                string lookahead = "";
+                if (opt.TryGetValue("leads_to", out var leadsObj) && leadsObj is List<Dictionary<string, object?>> leads && leads.Count > 0)
+                    lookahead = " → leads to: " + string.Join(", ", leads.Select(l => $"{l["type"]}({l["col"]},{l["row"]})"));
+                sb.AppendLine($"- [{opt["index"]}] **{opt["type"]}** ({opt["col"]},{opt["row"]}){lookahead}");
             }
             sb.AppendLine();
         }
@@ -515,68 +408,71 @@ public static partial class McpMod
             sb.AppendLine("No travelable nodes available.");
             sb.AppendLine();
         }
-    }
 
-    /// <summary>
-    /// BFS from a node through its children to build a future path tree string.
-    /// Format: -> Type (col,row) or Type (col,row) -> Type (col,row) or ...
-    /// </summary>
-    private static string BuildFuturePathTree(Dictionary<string, object?> startNode, Dictionary<string, Dictionary<string, object?>> nodeLookup)
-    {
-        // Look up the canonical node (with children) from the full node list
-        string startKey = $"{startNode["col"]},{startNode["row"]}";
-        var canonicalStart = nodeLookup.TryGetValue(startKey, out var cs) ? cs : startNode;
-        var currentKeys = GetChildKeys(canonicalStart);
-        var sb = new StringBuilder();
-
-        while (currentKeys.Count > 0)
+        // Full map overview — compact row-by-row
+        if (map.TryGetValue("nodes", out var nodesObj) && nodesObj is List<Dictionary<string, object?>> nodes && nodes.Count > 0)
         {
-            // Collect node info for this level
-            var levelNodes = new List<(string type, int col, int row)>();
-            var nextKeys = new HashSet<string>();
+            // Collect visited and travelable coords for markers
+            var visitedSet = new HashSet<string>();
+            if (map.TryGetValue("visited", out var v2) && v2 is List<Dictionary<string, object?>> vList)
+                foreach (var vn in vList)
+                    visitedSet.Add($"{vn["col"]},{vn["row"]}");
 
-            foreach (var key in currentKeys.OrderBy(k => k))
+            var travelableSet = new HashSet<string>();
+            if (map.TryGetValue("next_options", out var o2) && o2 is List<Dictionary<string, object?>> oList)
+                foreach (var on in oList)
+                    travelableSet.Add($"{on["col"]},{on["row"]}");
+
+            string? currentKey = null;
+            if (map.TryGetValue("current_position", out var cpObj) && cpObj is Dictionary<string, object?> cp)
+                currentKey = $"{cp["col"]},{cp["row"]}";
+
+            // Group nodes by row
+            var byRow = new SortedDictionary<int, List<Dictionary<string, object?>>>();
+            foreach (var node in nodes)
             {
-                if (nodeLookup.TryGetValue(key, out var node))
+                int row = node["row"] is int r ? r : Convert.ToInt32(node["row"]);
+                if (!byRow.TryGetValue(row, out var rowList))
+                    byRow[row] = rowList = new List<Dictionary<string, object?>>();
+                rowList.Add(node);
+            }
+
+            sb.AppendLine("## Map Overview");
+            sb.AppendLine("```");
+            sb.AppendLine("Legend: · = visited, * = current, → = next option");
+            sb.AppendLine();
+            foreach (var (row, rowNodes) in byRow)
+            {
+                var sorted = rowNodes.OrderBy(n => n["col"] is int c ? c : Convert.ToInt32(n["col"])).ToList();
+                var labels = new List<string>();
+                foreach (var node in sorted)
                 {
                     string type = node["type"]?.ToString() ?? "Unknown";
-                    int col = node["col"] is int c ? c : Convert.ToInt32(node["col"]);
-                    int row = node["row"] is int r ? r : Convert.ToInt32(node["row"]);
-                    levelNodes.Add((type, col, row));
+                    string key = $"{node["col"]},{node["row"]}";
 
-                    foreach (var childKey in GetChildKeys(node))
-                        nextKeys.Add(childKey);
+                    string marker = "";
+                    if (key == currentKey) marker = "*";
+                    else if (travelableSet.Contains(key)) marker = "→";
+                    else if (visitedSet.Contains(key)) marker = "·";
+
+                    labels.Add($"{marker}{type}({node["col"]},{node["row"]})");
                 }
+                sb.AppendLine($"  Row {row,2}: {string.Join("  ", labels)}");
             }
-
-            if (levelNodes.Count == 0) break;
-
-            sb.Append("-> ");
-            sb.Append(string.Join(" or ", levelNodes.Select(n => $"{n.type} ({n.col},{n.row})")));
-            sb.Append(' ');
-
-            currentKeys = nextKeys;
+            sb.AppendLine("```");
+            sb.AppendLine();
         }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static HashSet<string> GetChildKeys(Dictionary<string, object?> node)
-    {
-        var keys = new HashSet<string>();
-        if (node.TryGetValue("children", out var childrenObj) && childrenObj is System.Collections.IList childList)
-        {
-            foreach (var child in childList)
-            {
-                if (child is System.Collections.IList coords && coords.Count >= 2)
-                    keys.Add($"{coords[0]},{coords[1]}");
-            }
-        }
-        return keys;
     }
 
     private static void FormatRewardsMarkdown(StringBuilder sb, Dictionary<string, object?> rewards)
     {
+        if (rewards.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine("## Player (You)");
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]} | Potion slots: {player["open_potion_slots"]}/{player["potion_slots"]} open");
+            sb.AppendLine();
+        }
+
         if (rewards.TryGetValue("items", out var itemsObj) && itemsObj is List<Dictionary<string, object?>> items && items.Count > 0)
         {
             sb.AppendLine("## Rewards");
@@ -585,12 +481,8 @@ public static partial class McpMod
                 string extra = "";
                 if (item.TryGetValue("gold_amount", out var gold) && gold != null)
                     extra = $" ({gold} gold)";
-                else if (item.TryGetValue("potion_description", out var pDesc) && pDesc != null)
-                    extra = $" {item.GetValueOrDefault("potion_rarity")} ({item.GetValueOrDefault("potion_usage")}, target: {item.GetValueOrDefault("potion_target_type")}){FormatKeywordNames(item)} - {pDesc}";
                 else if (item.TryGetValue("potion_name", out var pName) && pName != null)
                     extra = $" ({pName})";
-                else if (item.TryGetValue("relic_description", out var rDesc) && rDesc != null)
-                    extra = $" {item.GetValueOrDefault("relic_rarity")}{FormatKeywordNames(item)} - {rDesc}";
                 sb.AppendLine($"- [{item["index"]}] **{item["type"]}**: {item["description"]}{extra}");
             }
             sb.AppendLine();
@@ -616,7 +508,12 @@ public static partial class McpMod
         if (cardReward.TryGetValue("cards", out var cardsObj) && cardsObj is List<Dictionary<string, object?>> cards)
         {
             foreach (var card in cards)
-                sb.AppendLine($"- [{card["index"]}] {FormatCardDetails(card)}");
+            {
+                string starCost = card.TryGetValue("star_cost", out var sc) && sc != null ? $" + {sc} star" : "";
+                string keywords = card.TryGetValue("keywords", out var kw) && kw is List<string> kwList && kwList.Count > 0
+                    ? $" [{string.Join(", ", kwList)}]" : "";
+                sb.AppendLine($"- [{card["index"]}] **{card["name"]}** ({card["cost"]} energy{starCost}) [{card["type"]}] {card["rarity"]}{keywords} — {card["description"]}");
+            }
             sb.AppendLine();
         }
 
@@ -632,10 +529,16 @@ public static partial class McpMod
             sb.AppendLine($"*{p}*");
         sb.AppendLine();
 
+        if (relicSelect.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
+            sb.AppendLine();
+        }
+
         if (relicSelect.TryGetValue("relics", out var relicsObj) && relicsObj is List<Dictionary<string, object?>> relics)
         {
             foreach (var relic in relics)
-                sb.AppendLine($"- [{relic["index"]}] {FormatRelicDetails(relic)}");
+                sb.AppendLine($"- [{relic["index"]}] **{relic["name"]}** — {relic["description"]}");
             sb.AppendLine();
         }
 
@@ -661,7 +564,9 @@ public static partial class McpMod
         {
             sb.AppendLine("### Selectable Cards");
             foreach (var card in cards)
-                sb.AppendLine($"- [{card["index"]}] {FormatCardDetails(card)}");
+            {
+                sb.AppendLine($"- [{card["index"]}] **{card["name"]}** ({card["cost"]} energy) [{card["type"]}] — {card["description"]}");
+            }
             sb.AppendLine();
         }
 
@@ -669,12 +574,12 @@ public static partial class McpMod
         {
             sb.AppendLine("### Already Selected");
             foreach (var card in selected)
-                sb.AppendLine($"- {FormatCardDetails(card)}");
+                sb.AppendLine($"- {card["name"]}");
             sb.AppendLine();
         }
 
         bool canConfirm = handSelect.TryGetValue("can_confirm", out var cc) && cc is true;
-        sb.AppendLine($"Use `combat_select_card(card_index)` to select. Can confirm: {(canConfirm ? "Yes - use `combat_confirm_selection`" : "No - select more cards")}");
+        sb.AppendLine($"Use `combat_select_card(card_index)` to select. Can confirm: {(canConfirm ? "Yes — use `combat_confirm_selection`" : "No — select more cards")}");
         sb.AppendLine();
     }
 
@@ -697,11 +602,19 @@ public static partial class McpMod
         }
         sb.AppendLine();
 
+        if (cardSelect.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
+            sb.AppendLine();
+        }
+
         if (cardSelect.TryGetValue("cards", out var cardsObj) && cardsObj is List<Dictionary<string, object?>> cards)
         {
             sb.AppendLine("### Cards");
             foreach (var card in cards)
-                sb.AppendLine($"- [{card["index"]}] {FormatCardDetails(card)}");
+            {
+                sb.AppendLine($"- [{card["index"]}] **{card["name"]}** ({card["cost"]} energy) [{card["type"]}] {card["rarity"]} — {card["description"]}");
+            }
             sb.AppendLine();
         }
 
@@ -710,7 +623,7 @@ public static partial class McpMod
         bool canCancel = cardSelect.TryGetValue("can_cancel", out var cn) && cn is true;
 
         if (preview)
-            sb.AppendLine("**Preview is showing** - use `confirm_selection` to confirm or `cancel_selection` to go back.");
+            sb.AppendLine("**Preview is showing** — use `confirm_selection` to confirm or `cancel_selection` to go back.");
         else
             sb.AppendLine($"**Select cards** using `select_card(index)`. Can confirm: {(canConfirm ? "Yes" : "No")} | Can cancel: {(canCancel ? "Yes" : "No")}");
         sb.AppendLine();
@@ -718,11 +631,123 @@ public static partial class McpMod
 
     private static void FormatBundleSelectMarkdown(StringBuilder sb, Dictionary<string, object?> bundleSelect)
     {
+        sb.AppendLine("## Bundle Selection");
+
+        if (bundleSelect.TryGetValue("prompt", out var promptObj) && promptObj != null)
+            sb.AppendLine($"*{promptObj}*");
+        sb.AppendLine();
+
+        if (bundleSelect.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine($"**{player["character"]}** - HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
+            sb.AppendLine();
+        }
+
+        if (bundleSelect.TryGetValue("bundles", out var bundlesObj) && bundlesObj is List<Dictionary<string, object?>> bundles && bundles.Count > 0)
+        {
+            sb.AppendLine("### Bundles");
+            foreach (var bundle in bundles)
+            {
+                sb.AppendLine($"- [{bundle["index"]}] Bundle with {bundle["card_count"]} card(s)");
+                if (bundle.TryGetValue("cards", out var cardsObj) && cardsObj is List<Dictionary<string, object?>> cards)
+                {
+                    foreach (var card in cards)
+                        sb.AppendLine($"  {card["name"]} ({card["cost"]}) [{card["type"]}] {card["rarity"]}");
+                }
+            }
+            sb.AppendLine();
+        }
+
+        bool preview = bundleSelect.TryGetValue("preview_showing", out var pv) && pv is true;
+        bool canConfirm = bundleSelect.TryGetValue("can_confirm", out var cc) && cc is true;
+        bool canCancel = bundleSelect.TryGetValue("can_cancel", out var cn) && cn is true;
+
+        if (preview)
+        {
+            sb.AppendLine("**Preview is showing** - use `confirm_bundle_selection()` to confirm or `cancel_bundle_selection()` to go back.");
+            if (bundleSelect.TryGetValue("preview_cards", out var previewCardsObj) && previewCardsObj is List<Dictionary<string, object?>> previewCards && previewCards.Count > 0)
+            {
+                sb.AppendLine("### Preview Cards");
+                foreach (var card in previewCards)
+                    sb.AppendLine($"- **{card["name"]}** ({card["cost"]} energy) [{card["type"]}] {card["rarity"]} - {card["description"]}");
+                sb.AppendLine();
+            }
+        }
+        else
+        {
+            sb.AppendLine($"Use `select_bundle(index)` to open a bundle preview. Can confirm: {(canConfirm ? "Yes" : "No")} | Can cancel: {(canCancel ? "Yes" : "No")}");
+            sb.AppendLine();
+        }
+    }
+
+    private static void FormatCrystalSphereMarkdown(StringBuilder sb, Dictionary<string, object?> crystalSphere)
+    {
+        sb.AppendLine("## Crystal Sphere");
+
+        if (crystalSphere.TryGetValue("instructions_title", out var titleObj) && titleObj != null)
+            sb.AppendLine($"**{titleObj}**");
+        if (crystalSphere.TryGetValue("instructions_description", out var descObj) && descObj != null)
+            sb.AppendLine(descObj.ToString());
+        sb.AppendLine();
+
+        if (crystalSphere.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine($"**{player["character"]}** - HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
+            sb.AppendLine();
+        }
+
+        string tool = crystalSphere.TryGetValue("tool", out var toolObj) ? toolObj?.ToString() ?? "none" : "none";
+        string divinationsLeft = crystalSphere.TryGetValue("divinations_left_text", out var dlObj) && dlObj != null
+            ? dlObj.ToString()!
+            : "Unknown";
+        sb.AppendLine($"**Tool:** {tool} | **Divinations:** {divinationsLeft}");
+        sb.AppendLine();
+
+        if (crystalSphere.TryGetValue("clickable_cells", out var cellsObj) && cellsObj is List<Dictionary<string, object?>> clickableCells && clickableCells.Count > 0)
+        {
+            sb.AppendLine("### Clickable Cells");
+            foreach (var cell in clickableCells)
+                sb.AppendLine($"- ({cell["x"]}, {cell["y"]})");
+            sb.AppendLine();
+        }
+
+        if (crystalSphere.TryGetValue("revealed_items", out var itemsObj) && itemsObj is List<Dictionary<string, object?>> revealedItems && revealedItems.Count > 0)
+        {
+            sb.AppendLine("### Revealed Items");
+            foreach (var item in revealedItems)
+                sb.AppendLine($"- **{item["item_type"]}** at ({item["x"]}, {item["y"]}) size {item["width"]}x{item["height"]}");
+            sb.AppendLine();
+        }
+
+        bool canProceed = crystalSphere.TryGetValue("can_proceed", out var cp) && cp is true;
+        if (canProceed)
+        {
+            sb.AppendLine("Use `crystal_sphere_proceed()` to continue.");
+        }
+        else
+        {
+            sb.AppendLine("Use `crystal_sphere_set_tool(tool)` with `big` or `small`, then `crystal_sphere_click_cell(x, y)`.");
+        }
+        sb.AppendLine();
+    }
+
+    private static void FormatTreasureMarkdown(StringBuilder sb, Dictionary<string, object?> treasure)
+    {
+        if (treasure.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        {
+            sb.AppendLine("## Player (You)");
+            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
+            sb.AppendLine();
+        }
+
         if (treasure.TryGetValue("relics", out var relicsObj) && relicsObj is List<Dictionary<string, object?>> relics && relics.Count > 0)
         {
             sb.AppendLine("## Treasure Relics");
             foreach (var relic in relics)
-                sb.AppendLine($"- [{relic["index"]}] {FormatRelicDetails(relic)}");
+            {
+                string rarity = relic.TryGetValue("rarity", out var r) && r != null ? $" ({r})" : "";
+                sb.AppendLine($"- [{relic["index"]}] **{relic["name"]}**{rarity} — {relic["description"]}");
+            }
             sb.AppendLine();
             sb.AppendLine("Use `treasure_claim_relic(relic_index)` to claim a relic.");
         }
@@ -756,17 +781,108 @@ public static partial class McpMod
         }
     }
 
-    private static void FormatPotionsSection(StringBuilder sb, Dictionary<string, object?> playerDict)
+    private static void FormatMultiplayerBattleMarkdown(StringBuilder sb, Dictionary<string, object?> battle)
     {
-        if (!playerDict.TryGetValue("potions", out var potionsObj)
-            || potionsObj is not List<Dictionary<string, object?>> potions
-            || potions.Count == 0)
+        if (battle.TryGetValue("error", out var err) && err != null)
+        {
+            sb.AppendLine($"**Combat Error:** {err}");
+            sb.AppendLine();
             return;
-        int max = playerDict.TryGetValue("max_potion_slots", out var ms) && ms is int msi ? msi : potions.Count;
-        sb.AppendLine($"### Potions ({potions.Count}/{max})");
-        foreach (var p in potions)
-            sb.AppendLine($"- [{p["slot"]}] **{p["name"]}**: {p["description"]}");
+        }
+
+        bool allReady = battle.TryGetValue("all_players_ready", out var ar) && ar is true;
+        sb.AppendLine($"**Round {battle["round"]}** | Turn: {battle["turn"]} | Play Phase: {battle["is_play_phase"]} | All Ready: {allReady}");
         sb.AppendLine();
+
+        // All players
+        if (battle.TryGetValue("players", out var playersObj) && playersObj is List<Dictionary<string, object?>> players)
+        {
+            foreach (var player in players)
+            {
+                string youTag = player["is_local"] is true ? " **(YOU)**" : "";
+                string aliveTag = player["is_alive"] is false ? " [DEAD]" : "";
+                string readyTag = player["is_ready_to_end_turn"] is true ? " [READY]" : "";
+                string stars = player.TryGetValue("stars", out var s) && s != null ? $" | Stars: {s}" : "";
+
+                sb.AppendLine($"## Player: {player["character"]}{youTag}{aliveTag}{readyTag}");
+                string energyStr = player.TryGetValue("energy", out var en) && player.TryGetValue("max_energy", out var men)
+                    ? $" | Energy: {en}/{men}" : "";
+                sb.AppendLine($"HP: {player["hp"]}/{player["max_hp"]} | Block: {player["block"]}{energyStr}{stars} | Gold: {player["gold"]}");
+                sb.AppendLine();
+
+                FormatListSection(sb, "Status", player, "status", p => $"- **{p["name"]}** ({FormatStatusAmount(p["amount"])}): {p["description"]}");
+                FormatListSection(sb, "Relics", player, "relics", r =>
+                {
+                    string counter = r.TryGetValue("counter", out var c) && c != null ? $" [{c}]" : "";
+                    return $"- **{r["name"]}**{counter}: {r["description"]}";
+                });
+                FormatListSection(sb, "Potions", player, "potions", p =>
+                {
+                    string desc = p.TryGetValue("description", out var d) && d != null ? $": {d}" : "";
+                    return $"- [{p["slot"]}] **{p["name"]}**{desc}";
+                });
+
+                if (player["is_local"] is true)
+                {
+                    if (player.TryGetValue("hand", out var handObj) && handObj is List<Dictionary<string, object?>> hand && hand.Count > 0)
+                    {
+                        sb.AppendLine("### Hand");
+                        foreach (var card in hand)
+                        {
+                            string playable = card["can_play"] is true ? "\u2713" : "\u2717";
+                            string keywords = card.TryGetValue("keywords", out var kw) && kw is List<string> kwList && kwList.Count > 0
+                                ? $" [{string.Join(", ", kwList)}]" : "";
+                            string starCost = card.TryGetValue("star_cost", out var sc) && sc != null ? $" + {sc} star" : "";
+                            sb.AppendLine($"- [{card["index"]}] **{card["name"]}** ({card["cost"]} energy{starCost}) [{card["type"]}] {playable}{keywords} — {card["description"]} (target: {card["target_type"]})");
+                        }
+                        sb.AppendLine();
+                    }
+
+                    FormatDeckPilesMarkdown(sb, player);
+
+                    if (player.TryGetValue("orbs", out var orbsObj) && orbsObj is List<Dictionary<string, object?>> orbs && orbs.Count > 0)
+                    {
+                        int slots = player.TryGetValue("orb_slots", out var osVal) && osVal is int sv ? sv : orbs.Count;
+                        int empty = player.TryGetValue("orb_empty_slots", out var esVal) && esVal is int ev ? ev : 0;
+                        sb.AppendLine($"### Orbs ({orbs.Count}/{slots} slots)");
+                        foreach (var orb in orbs)
+                        {
+                            string desc = orb.TryGetValue("description", out var d) && d != null ? $" — {d}" : "";
+                            sb.AppendLine($"- **{orb["name"]}** (passive: {orb["passive_val"]}, evoke: {orb["evoke_val"]}){desc}");
+                        }
+                        if (empty > 0)
+                            sb.AppendLine($"- *{empty} empty slot(s)*");
+                        sb.AppendLine();
+                    }
+                }
+            }
+        }
+
+        if (battle.TryGetValue("enemies", out var enemiesObj) && enemiesObj is List<Dictionary<string, object?>> enemies && enemies.Count > 0)
+        {
+            sb.AppendLine("## Enemies");
+            foreach (var enemy in enemies)
+            {
+                sb.AppendLine($"### {enemy["name"]} (`{enemy["entity_id"]}`)");
+                sb.AppendLine($"HP: {enemy["hp"]}/{enemy["max_hp"]} | Block: {enemy["block"]}");
+
+                if (enemy.TryGetValue("intents", out var intentsObj) && intentsObj is List<Dictionary<string, object?>> intents && intents.Count > 0)
+                {
+                    sb.Append("**Intent:** ");
+                    sb.AppendLine(string.Join(", ", intents.Select(i =>
+                    {
+                        string title = i.TryGetValue("title", out var t) && t != null ? t.ToString()! : i["type"]!.ToString()!;
+                        string typeTag = $" ({i["type"]})";
+                        string label = i.TryGetValue("label", out var l) && l is string ls && ls.Length > 0 ? $" {ls}" : "";
+                        string desc = i.TryGetValue("description", out var d) && d is string ds && ds.Length > 0 ? $" - {ds}" : "";
+                        return $"{title}{typeTag}{label}{desc}";
+                    })));
+                }
+
+                FormatListSection(sb, "Status", enemy, "status", p => $"  - **{p["name"]}** ({FormatStatusAmount(p["amount"])}): {p["description"]}");
+                sb.AppendLine();
+            }
+        }
     }
 
     private static void FormatMapVotesMarkdown(StringBuilder sb, Dictionary<string, object?> mapData)
