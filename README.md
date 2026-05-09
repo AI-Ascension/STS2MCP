@@ -162,7 +162,21 @@ Restart your Claude session after adding the config. To verify the MCP server is
 
 The MCP server accepts `--host` and `--port` options if you need non-default settings. If the game mod is launched with a custom `STS2_PORT`, configure the MCP bridge to use the same port, for example `uv run --directory /path/to/STS2_MCP/mcp python server.py --port 15527`.
 
-Flag `--no-trust-env` can be used to disable `requests` from picking up proxy settings from the environment, which can cause connection issues if you are running the server in a container.
+Flag `--no-trust-env` can be used to disable the HTTP client from picking up proxy settings from the environment, which can cause connection issues if you are running the server in a container.
+
+Optional bridge settings can also be placed in `mcp/.env`:
+
+```dotenv
+STS2_HOST=localhost
+STS2_PORT=15526
+STS2_MCP_AUTH_TOKEN=your-token
+```
+
+When `STS2_MCP_AUTH_TOKEN` is set, the MCP bridge sends it to the game HTTP API as an `Authorization: Bearer ...` header on every request. This is a bridge client setting only: the current STS2_MCP game mod does not require or validate that token by itself. It exists so the MCP bridge can interoperate with a local proxy, tunnel, or future authenticated HTTP listener without changing tool calls.
+
+Shell environment variables take precedence over values in `mcp/.env`, which makes it safe to keep shared defaults in the file while overriding secrets in the launch environment. The parser supports simple `KEY=value`, `export KEY=value`, quoted values, and inline comments that begin after whitespace. Values such as `token#fragment` are preserved because `#` is only treated as a comment marker when preceded by whitespace.
+
+Local `.env` files are ignored by git. If you change the mod's game API port, set the same `STS2_PORT` for the MCP bridge.
 
 ## For Developers
 
