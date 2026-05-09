@@ -262,6 +262,40 @@ async def test_delete_profile_preserves_structured_endpoint_error(server) -> Non
     assert payload["http_status"] == 409
 
 
+async def test_create_snapshot_preserves_structured_endpoint_error(server) -> None:
+    async def fake_snapshots_post(body: dict) -> str:
+        assert body == {"action": "create"}
+        raise _http_status_error(
+            400,
+            {
+                "status": "error",
+                "error": "Snapshots are disabled.",
+                "error_code": "snapshots_disabled",
+            },
+        )
+
+    server._snapshots_post = fake_snapshots_post
+    rendered = await server.create_snapshot()
+    payload = json.loads(rendered)
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "snapshots_disabled"
+    assert payload["http_status"] == 400
+
+
+async def test_resume_snapshot_uses_snapshot_id(server) -> None:
+    async def fake_snapshots_post(body: dict) -> str:
+        assert body == {"action": "resume", "snapshot_id": "snapshot-1"}
+        return '{"status":"ok","kind":"snapshot_resume"}'
+
+    server._snapshots_post = fake_snapshots_post
+    rendered = await server.resume_snapshot("snapshot-1")
+    payload = json.loads(rendered)
+
+    assert payload["status"] == "ok"
+    assert payload["kind"] == "snapshot_resume"
+
+
 def main() -> None:
     server = _load_server_module()
     test_structured_http_error_is_preserved(server)
@@ -272,6 +306,8 @@ def main() -> None:
     asyncio.run(test_switch_profile_reposts_from_profile_screen_and_waits(server))
     asyncio.run(test_wait_for_profile_timeout_keeps_initial_response(server))
     asyncio.run(test_delete_profile_preserves_structured_endpoint_error(server))
+    asyncio.run(test_create_snapshot_preserves_structured_endpoint_error(server))
+    asyncio.run(test_resume_snapshot_uses_snapshot_id(server))
     print("mcp server tests passed")
 
 

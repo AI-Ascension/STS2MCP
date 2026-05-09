@@ -17,6 +17,8 @@ HTTP API served by the STS2_MCP mod on `localhost:15526`. No authentication. Loc
 - `GET  /api/v1/glossary/keywords` — read active-run keyword metadata
 - `GET  /api/v1/profiles` — list profile slots
 - `POST /api/v1/profiles` — switch or delete profile slots
+- `GET  /api/v1/snapshots` — list current-run save snapshots
+- `POST /api/v1/snapshots` — create or resume current-run save snapshots
 
 HTTP error responses include `status: "error"` and `error`; route, validation, read-endpoint, and action failures include `error_code`.
 Route-level failures include `error_code: "method_not_allowed"` for unsupported HTTP methods, `error_code: "not_found"` for unknown paths, and `error_code: "internal_error"` for unexpected top-level handler failures.
@@ -1220,6 +1222,61 @@ Delete an inactive profile slot:
 
 Switching is rejected during a run. Deleting the active profile is rejected; switch away first if you need to remove a slot.
 Profile action validation returns structured HTTP errors: invalid profile IDs and unknown actions return HTTP 400, deleting the active profile returns HTTP 409 with `error_code: "active_profile_delete"`, and switching profiles during a run returns HTTP 409 with `error_code: "run_in_progress"`.
+
+### `GET /api/v1/snapshots`
+
+Lists current-run save snapshots created by STS2_MCP and reports whether automatic snapshot capture is enabled.
+
+Snapshot capture is opt-in. Launch the game with `STS2_MCP_SNAPSHOTS=1` to copy `current_run.save` or `current_run_mp.save` every time the game saves. Set `STS2_MCP_SNAPSHOT_DIR` to override the snapshot directory.
+
+```json
+{
+  "status": "ok",
+  "kind": "snapshots",
+  "enabled": true,
+  "enable_env_var": "STS2_MCP_SNAPSHOTS",
+  "snapshot_root_env_var": "STS2_MCP_SNAPSHOT_DIR",
+  "snapshot_root": "C:/.../SlayTheSpire2/steam/<account>/sts2_mcp_snapshots",
+  "count": 1,
+  "snapshots": [
+    {
+      "id": "modded_profile1_sp_20260509T173000000Z",
+      "profile_id": 1,
+      "profile_root": "modded/profile1",
+      "save_scope": "modded",
+      "game_mode": "singleplayer",
+      "save_file_name": "current_run.save",
+      "run_id": "modded:profile1:1777777777",
+      "start_time": 1777777777,
+      "save_time": 1777777999,
+      "snapshot_save_path": "C:/.../sts2_mcp_snapshots/modded_profile1_sp_20260509T173000000Z/current_run.save"
+    }
+  ]
+}
+```
+
+### `POST /api/v1/snapshots`
+
+Create a snapshot from the active profile's latest current-run save:
+
+```json
+{ "action": "create" }
+```
+
+Restore a snapshot to the active profile's current-run save slot:
+
+```json
+{ "action": "resume", "snapshot_id": "modded_profile1_sp_20260509T173000000Z" }
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `action` | string | Yes | `create` or `resume` |
+| `snapshot_id` | string | For `resume` | Snapshot ID from `GET /api/v1/snapshots` or the create response |
+
+Snapshot actions require `STS2_MCP_SNAPSHOTS=1`. Resuming is rejected while a run is in progress; after restore, use the in-game Continue flow. If an existing current-run save is overwritten, the endpoint first writes a `.pre_snapshot_resume_*.backup` copy.
+
+Manual snapshot creation is rejected on map and shop screens with `error_code: "snapshot_state_not_supported"`. STS2 saves resume the latest visited room rather than the idle map screen, and shop saves do not persist the current merchant inventory.
 
 ---
 

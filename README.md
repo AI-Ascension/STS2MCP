@@ -69,7 +69,7 @@ A successful response looks like:
   "kind": "api_index",
   "version": "0.4.0",
   "bound_prefixes": ["http://localhost:15526/", "http://127.0.0.1:15526/"],
-  "endpoint_count": 14,
+  "endpoint_count": 16,
   "endpoints": [
     { "method": "GET", "path": "/api/v1/singleplayer" },
     { "method": "POST", "path": "/api/v1/singleplayer" },
@@ -84,7 +84,9 @@ A successful response looks like:
     { "method": "GET", "path": "/api/v1/glossary/potions" },
     { "method": "GET", "path": "/api/v1/glossary/keywords" },
     { "method": "GET", "path": "/api/v1/profiles" },
-    { "method": "POST", "path": "/api/v1/profiles" }
+    { "method": "POST", "path": "/api/v1/profiles" },
+    { "method": "GET", "path": "/api/v1/snapshots" },
+    { "method": "POST", "path": "/api/v1/snapshots" }
   ]
 }
 ```
@@ -107,6 +109,16 @@ uv run --project mcp python scripts/test_mcp_server.py
 For the stable endpoint envelopes, save/run context fields, structured error
 codes, glossary scope, action-readiness fields, and audit coverage, see
 [`docs/endpoint-contracts.md`](docs/endpoint-contracts.md).
+
+#### Optional run snapshots
+
+Launch the game with `STS2_MCP_SNAPSHOTS=1` to capture a snapshot every time the game saves the active run. Snapshots copy `current_run.save` or `current_run_mp.save` to a separate snapshot directory and include metadata such as profile, run ID, save time, mode, and source path.
+
+Set `STS2_MCP_SNAPSHOT_DIR` to choose the snapshot directory. Without it, snapshots are stored under the detected account save root in `sts2_mcp_snapshots`.
+
+Use `GET /api/v1/snapshots` to list snapshots, `POST /api/v1/snapshots` with `{"action":"create"}` to create one manually, and `{"action":"resume","snapshot_id":"..."}` to restore a snapshot to the active profile's current-run save slot. Restore is rejected while a run is in progress; after restoring, use the in-game Continue flow.
+
+Manual snapshots are rejected on map and shop screens. STS2 saves resume the latest visited room rather than the idle map screen, and shop saves do not persist the current merchant inventory. Choose a map node before snapshotting, and snapshot before entering a shop or after leaving it.
 
 ### 2. Give Your AI Instructions to Interact with the Game
 

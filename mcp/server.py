@@ -59,6 +59,10 @@ def _profiles_url() -> str:
     return f"{_base_url}/api/v1/profiles"
 
 
+def _snapshots_url() -> str:
+    return f"{_base_url}/api/v1/snapshots"
+
+
 def _get_client() -> httpx.AsyncClient:
     global _http
     if _http is None:
@@ -134,6 +138,18 @@ async def _profiles_get() -> str:
 
 async def _profiles_post(body: dict) -> str:
     r = await _get_client().post(_profiles_url(), json=body)
+    r.raise_for_status()
+    return r.text
+
+
+async def _snapshots_get() -> str:
+    r = await _get_client().get(_snapshots_url())
+    r.raise_for_status()
+    return r.text
+
+
+async def _snapshots_post(body: dict) -> str:
+    r = await _get_client().post(_snapshots_url(), json=body)
     r.raise_for_status()
     return r.text
 
@@ -465,6 +481,52 @@ async def switch_profile(profile_id: int) -> str:
         except json.JSONDecodeError:
             pass
         return result
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool()
+async def list_snapshots() -> str:
+    """List STS2_MCP current-run save snapshots.
+
+    Snapshot capture is enabled in the loaded mod by launching the game with
+    STS2_MCP_SNAPSHOTS=1. The response includes enabled state, snapshot root,
+    count, and snapshot metadata such as profile_id, run_id, game_mode, and
+    snapshot_id.
+    """
+    try:
+        return await _snapshots_get()
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool()
+async def create_snapshot() -> str:
+    """Create a snapshot from the active profile's current run save file.
+
+    Requires STS2_MCP_SNAPSHOTS=1 in the game process. This copies the latest
+    current_run.save/current_run_mp.save on disk without playing game actions.
+    The mod rejects manual snapshots from map and shop screens because STS2
+    saves cannot restore those exact UI states.
+    """
+    try:
+        return await _snapshots_post({"action": "create"})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool()
+async def resume_snapshot(snapshot_id: str) -> str:
+    """Restore a snapshot to the active profile's current run save slot.
+
+    Requires STS2_MCP_SNAPSHOTS=1 in the game process. The mod rejects this while
+    a run is in progress; after restore, use the in-game Continue flow to load it.
+
+    Args:
+        snapshot_id: ID returned by list_snapshots() or create_snapshot().
+    """
+    try:
+        return await _snapshots_post({"action": "resume", "snapshot_id": snapshot_id})
     except Exception as e:
         return _handle_error(e)
 
