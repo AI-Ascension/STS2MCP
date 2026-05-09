@@ -10,6 +10,7 @@
 | `get_settings()` | General | Get current settings and preferences |
 | `get_profile()` | Profiles | Get active profile progress plus save/run context |
 | `get_compendium()` | Profiles | Get Compendium-shaped profile progress plus save/run context |
+| `search_wiki(query, item_type?, limit?)` | Profiles | Fuzzy-search discovered card and relic wiki entries |
 | `get_bestiary()` | Profiles | Get deterministic monster and encounter metadata with counts |
 | `get_glossary_cards()` | Active Pool | Get active-run card pool metadata with current-run save context |
 | `get_glossary_relics()` | Active Pool | Get active-run relic pool metadata with current-run save context |
@@ -72,6 +73,8 @@ Read endpoint exceptions preserve endpoint-specific `error_code` values such as 
 Menu/action dispatch failures also use structured endpoint errors: missing or unknown main-menu selections and unknown actions return HTTP 400, gameplay actions sent without an active run return HTTP 409, Timeline manual-reveal blocks return HTTP 409 with `error_code: timeline_manual_action_required`, and blocking tutorial/popup overlays return HTTP 409 with `error_code: blocking_popup_active`. Older generic action failures carry the stable fallback `error_code: action_error` instead of omitting an error code. Other failed actions return non-2xx structured error JSON instead of HTTP 200. MCP wrappers preserve those structured JSON error bodies and add `http_status` so callers can handle endpoint failures without parsing a flat text prefix.
 
 Glossary tools require an active run. They include the current character context plus shared run pools such as Colorless cards, shared relics, and shared potions. Card glossary items include energy/star costs, upgrade availability, plus upgraded-preview cost and description. Successful responses include `profile_id`, `progress_path`, `resolved_progress_path`, `profile_root`, `save_scope`, `current_run` save context, `kind`, `count`, and `items`; `current_run.run_id` and `current_run.seed` are included when `current_run.save` exposes them. The HTTP endpoints return `run_not_in_progress` with HTTP 409 when called from the main menu, or `run_state_unavailable` with HTTP 503 if the active run state cannot be read, while still including the active profile/save context fields.
+
+`search_wiki(query, item_type="all", limit=10)` is the selective profile wiki lookup. It fuzzy-matches names and IDs such as `ironclad perfect strike` or `silver spoon`, but searches only cards and relics discovered by the active profile. Card matches include `base` and `upgraded` blocks so agents can compare pre-upgrade and post-upgrade text without asking for the full card library.
 
 ## Bridge Configuration
 

@@ -10,6 +10,7 @@ HTTP API served by the STS2_MCP mod on `localhost:15526`. No authentication. Loc
 - `GET  /api/v1/settings` — read settings and preferences
 - `GET  /api/v1/profile` — read current profile progress
 - `GET  /api/v1/compendium` — read Compendium-shaped profile progress
+- `GET  /api/v1/wiki` — fuzzy-search discovered card/relic wiki entries
 - `GET  /api/v1/bestiary` — read monster and encounter metadata
 - `GET  /api/v1/glossary/cards` — read active-run card pool metadata
 - `GET  /api/v1/glossary/relics` — read active-run relic pool metadata
@@ -1094,6 +1095,32 @@ Returns the active profile's progress grouped by the in-game Compendium cards:
   }
 }
 ```
+
+### `GET /api/v1/wiki`
+
+Searches wiki-style card and relic entries available to the active profile. The endpoint requires a query, filters to the profile's discovered card and relic IDs, fuzzy-ranks the matches, and returns a bounded result set. It does not expose the full game catalog.
+
+Query parameters:
+
+| Parameter | Values | Default | Description |
+|---|---|---|---|
+| `query` or `q` | text | required | Fuzzy search text, such as `ironclad perfect strike` or `silver spoon`. |
+| `item_type` or `type` | `all`, `card`, `relic` | `all` | Restricts the search to one wiki kind. |
+| `limit` | integer | `10` | Maximum returned entries. The mod clamps values below 1 and above its internal maximum. |
+
+Card results include both `base` and `upgraded` variants when the card can be upgraded. The upgraded variant is built from a cloned preview, so the catalog model is not mutated.
+
+```http
+GET /api/v1/wiki?query=ironclad%20perfect%20strike&item_type=card&limit=3
+```
+
+Relic searches use the same profile filter and ranking:
+
+```http
+GET /api/v1/wiki?query=silver%20spoon&item_type=relic
+```
+
+Relic results include `id`, `name`, `rarity`, `description`, and `keywords`.
 
 ### `GET /api/v1/bestiary`
 

@@ -9,6 +9,7 @@ HTTP API on `localhost:15526`. No authentication.
 - `GET /api/v1/settings` — read settings and preferences
 - `GET /api/v1/profile` — read current profile progress
 - `GET /api/v1/compendium` — read Compendium-shaped profile progress
+- `GET /api/v1/wiki` — fuzzy-search discovered card/relic wiki entries
 - `GET /api/v1/bestiary` — read monster and encounter metadata
 - `GET /api/v1/glossary/cards` — read active-run card pool metadata
 - `GET /api/v1/glossary/relics` — read active-run relic pool metadata
@@ -114,6 +115,8 @@ When a run is active, the response includes `current_run` with profile/save cont
 `GET /api/v1/profile` returns the active profile's progress with `status`, `kind: "profile"`, `profile_id`, save scope/path context, `resolved_progress_path`, and `current_run` when a run is active.
 
 `GET /api/v1/compendium` returns the active profile's Compendium-shaped progress with `status`, `kind: "compendium"`, the same profile/save context, and grouped Compendium sections.
+
+`GET /api/v1/wiki?query=<text>&item_type=<all|card|relic>&limit=<n>` returns a bounded fuzzy-search result over the active profile's discovered cards and relics. `query` is required because this endpoint is intentionally selective and does not dump the full catalog. `item_type` defaults to `all`, and `limit` defaults to 10 with an internal maximum. Card results include both `base` and `upgraded` objects when the card can be upgraded.
 
 ```json
 {

@@ -516,6 +516,13 @@ public static partial class McpMod
                 else
                     SendMethodNotAllowed(response);
             }
+            else if (path == "/api/v1/wiki")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetWiki(request, response);
+                else
+                    SendMethodNotAllowed(response);
+            }
             else
             {
                 SendNotFound(response);
@@ -542,6 +549,7 @@ public static partial class McpMod
             new() { ["method"] = "GET", ["path"] = "/api/v1/settings", ["description"] = "Read settings and preferences" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/profile", ["description"] = "Read active profile progress plus normalized save/run context" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/compendium", ["description"] = "Read Compendium-shaped profile progress plus normalized save/run context" },
+            new() { ["method"] = "GET", ["path"] = "/api/v1/wiki", ["description"] = "Fuzzy-search active-profile discovered card and relic wiki entries" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/bestiary", ["description"] = "Read monster and encounter metadata" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/glossary/cards", ["description"] = "Read active-run card pool metadata plus profile/save/run context" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/glossary/relics", ["description"] = "Read active-run relic pool metadata plus profile/save/run context" },
