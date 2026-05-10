@@ -1450,29 +1450,32 @@ public static partial class McpMod
         }
     }
 
-    private static object? GetMemberValue(object source, string memberName)
+    private static object? GetMemberValue(object? source, string memberName)
     {
+        if (source == null)
+            return null;
+
         const System.Reflection.BindingFlags Flags =
             System.Reflection.BindingFlags.Instance |
             System.Reflection.BindingFlags.Public |
             System.Reflection.BindingFlags.NonPublic;
 
-        var type = source.GetType();
-        try
+        for (var type = source.GetType(); type != null; type = type.BaseType)
         {
             var property = type.GetProperty(memberName, Flags);
-            if (property != null)
-                return property.GetValue(source);
-        }
-        catch { }
+            if (property != null && property.GetIndexParameters().Length == 0)
+            {
+                try { return property.GetValue(source); }
+                catch { return null; }
+            }
 
-        try
-        {
             var field = type.GetField(memberName, Flags);
             if (field != null)
-                return field.GetValue(source);
+            {
+                try { return field.GetValue(source); }
+                catch { return null; }
+            }
         }
-        catch { }
 
         return null;
     }
@@ -2053,36 +2056,6 @@ public static partial class McpMod
             var text = value.ToString();
             if (!string.IsNullOrWhiteSpace(text))
                 return text;
-        }
-
-        return null;
-    }
-
-    private static object? GetMemberValue(object? source, string memberName)
-    {
-        if (source == null)
-            return null;
-
-        const System.Reflection.BindingFlags Flags =
-            System.Reflection.BindingFlags.Instance |
-            System.Reflection.BindingFlags.Public |
-            System.Reflection.BindingFlags.NonPublic;
-
-        for (var type = source.GetType(); type != null; type = type.BaseType)
-        {
-            var property = type.GetProperty(memberName, Flags);
-            if (property != null && property.GetIndexParameters().Length == 0)
-            {
-                try { return property.GetValue(source); }
-                catch { return null; }
-            }
-
-            var field = type.GetField(memberName, Flags);
-            if (field != null)
-            {
-                try { return field.GetValue(source); }
-                catch { return null; }
-            }
         }
 
         return null;
