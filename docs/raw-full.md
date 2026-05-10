@@ -608,7 +608,15 @@ Pick one card to add to your deck. Appears after claiming a card reward, or dire
         "children": [ [2, 1], [3, 1], [4, 1] ]  // [col, row] pairs
       }
     ],
-    "boss": { "col": 3, "row": 15 }
+    "boss": {
+      "col": 3,
+      "row": 15,
+      "id": "ENCOUNTER.VANTOM_BOSS",
+      "name": "Vantom"
+    },
+    "bosses": [
+      { "col": 3, "row": 15, "id": "ENCOUNTER.VANTOM_BOSS", "name": "Vantom" }
+    ]
   },
   "run": { ... },
   "player": { ... }
