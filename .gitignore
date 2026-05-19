@@ -8,7 +8,7 @@ __pycache__/
 *.pyo
 mcp/.venv/
 
-# Local environment overrides
+# Local environment
 .env
 mcp/.env
 

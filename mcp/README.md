@@ -52,7 +52,21 @@
 
 The Compendium response is profile-scoped, not run-state-scoped. It works from the main menu, does not require navigating the in-game Compendium UI, and summarizes only the 20 most recent saved run-history files to keep the MCP response bounded.
 
-`search_wiki(query, item_type="all", limit=10)` is the selective wiki lookup. It fuzzy-matches names and IDs such as `ironclad perfect strike` or `silver spoon`, but it searches only cards and relics discovered by the active profile. The default response is capped at 10 entries; callers may pass a higher or lower `limit`, and the mod clamps oversized requests. Card matches include `base` and `upgraded` blocks so agents can compare pre-upgrade and post-upgrade text without asking for the full card library.
+Profile switch/delete failures are surfaced as structured endpoint errors with HTTP 400 for invalid input and HTTP 409 for state conflicts such as deleting the active profile or switching during a run.
+
+Snapshot capture is opt-in. Launch the game with `STS2_MCP_SNAPSHOTS=1` to create a snapshot every time the game saves `current_run.save` or `current_run_mp.save`. Set `STS2_MCP_SNAPSHOT_DIR` to override the snapshot directory. `resume_snapshot()` restores a selected snapshot on disk and is rejected while a run is in progress; continue from the in-game menu after restoring.
+
+POST validation failures preserve endpoint `error_code` values such as `invalid_json`, `missing_action`, `invalid_action_type`, `missing_profile_id`, `invalid_profile_id_type`, and `invalid_action_payload`.
+
+Route-level failures preserve endpoint `error_code` values such as `method_not_allowed`, `not_found`, and `internal_error`.
+
+Read endpoint startup/data-availability failures preserve endpoint `error_code` values such as `save_manager_unavailable`, `settings_data_unavailable`, and `profile_data_unavailable`.
+
+Read endpoint exceptions preserve endpoint-specific `error_code` values such as `settings_read_failed`, `bestiary_build_failed`, `glossary_build_failed`, `profile_build_failed`, `profiles_read_failed`, `compendium_build_failed`, `singleplayer_state_read_failed`, and `multiplayer_state_read_failed`.
+
+Menu/action dispatch failures also use structured endpoint errors: missing or unknown main-menu selections and unknown actions return HTTP 400, gameplay actions sent without an active run return HTTP 409, Timeline manual-reveal blocks return HTTP 409 with `error_code: timeline_manual_action_required`, and blocking tutorial/popup overlays return HTTP 409 with `error_code: blocking_popup_active`. Older generic action failures carry the stable fallback `error_code: action_error` instead of omitting an error code. Other failed actions return non-2xx structured error JSON instead of HTTP 200. MCP wrappers preserve those structured JSON error bodies and add `http_status` so callers can handle endpoint failures without parsing a flat text prefix.
+
+Glossary tools require an active run. They include the current character context plus shared run pools such as Colorless cards, shared relics, and shared potions. Card glossary items include energy/star costs, upgrade availability, plus upgraded-preview cost and description. Successful responses include `profile_id`, `progress_path`, `resolved_progress_path`, `profile_root`, `save_scope`, `current_run` save context, `kind`, `count`, and `items`; `current_run.run_id` and `current_run.seed` are included when `current_run.save` exposes them. The HTTP endpoints return `run_not_in_progress` with HTTP 409 when called from the main menu, or `run_state_unavailable` with HTTP 503 if the active run state cannot be read, while still including the active profile/save context fields.
 
 ## Multiplayer
 
