@@ -116,6 +116,16 @@ Use `GET /api/v1/snapshots` to list snapshots, `POST /api/v1/snapshots` with `{"
 
 Manual snapshots are rejected on map and shop screens. STS2 saves resume the latest visited room rather than the idle map screen, and shop saves do not persist the current merchant inventory. Choose a map node before snapshotting, and snapshot before entering a shop or after leaving it.
 
+#### Optional run snapshots
+
+Launch the game with `STS2_MCP_SNAPSHOTS=1` to capture a snapshot every time the game saves the active run. Snapshots copy `current_run.save` or `current_run_mp.save` to a separate snapshot directory and include metadata such as profile, run ID, save time, mode, and source path.
+
+Set `STS2_MCP_SNAPSHOT_DIR` to choose the snapshot directory. Without it, snapshots are stored under the detected account save root in `sts2_mcp_snapshots`.
+
+Use `GET /api/v1/snapshots` to list snapshots, `POST /api/v1/snapshots` with `{"action":"create"}` to create one manually, and `{"action":"resume","snapshot_id":"..."}` to restore a snapshot to the active profile's current-run save slot. Restore is rejected while a run is in progress; after restoring, use the in-game Continue flow.
+
+Manual snapshots are rejected on map and shop screens. STS2 saves resume the latest visited room rather than the idle map screen, and shop saves do not persist the current merchant inventory. Choose a map node before snapshotting, and snapshot before entering a shop or after leaving it.
+
 ### 2. Give Your AI Instructions to Interact with the Game
 
 **Clone or download the repository**, then:
@@ -168,23 +178,11 @@ STS2_PORT=15526
 STS2_MCP_AUTH_TOKEN=your-token
 ```
 
-When `STS2_MCP_AUTH_TOKEN` is set, the MCP bridge sends it to the game HTTP API as an `Authorization: Bearer ...` header. Shell environment variables take precedence over values in `mcp/.env`. If you change the mod's game API port, set the same `STS2_PORT` for the MCP bridge.
+When `STS2_MCP_AUTH_TOKEN` is set, the MCP bridge sends it to the game HTTP API as an `Authorization: Bearer ...` header on every request. This is a bridge client setting only: the current STS2_MCP game mod does not require or validate that token by itself. It exists so the MCP bridge can interoperate with a local proxy, tunnel, or future authenticated HTTP listener without changing tool calls.
 
-### Profile and Compendium Data
+Shell environment variables take precedence over values in `mcp/.env`, which makes it safe to keep shared defaults in the file while overriding secrets in the launch environment. The parser supports simple `KEY=value`, `export KEY=value`, quoted values, and inline comments that begin after whitespace. Values such as `token#fragment` are preserved because `#` is only treated as a comment marker when preceded by whitespace.
 
-The HTTP API exposes profile-level progress separately from live run state:
-
-- `GET /api/v1/profile` returns the active profile's persistent progress summary, including discoveries, achievements, epochs, character totals, and global run totals.
-- `GET /api/v1/compendium` groups that progress into the same high-level sections as the in-game Compendium: Card Library, Relic Collection, Potion Lab, Bestiary, Character Stats, and Run History.
-- `GET /api/v1/wiki?query=...` searches discovered card and relic wiki entries for the active profile with fuzzy matching. Results are limited to 10 by default and can be overridden with `limit`; card results include base and upgraded variants when available.
-- `GET /api/v1/profiles` lists the three profile slots and the active profile.
-- `POST /api/v1/profiles` switches or deletes profile slots through the game UI.
-
-The MCP server exposes the same profile data through `get_profile()`, `get_compendium()`, `search_wiki(query, item_type, limit)`, `list_profiles()`, `switch_profile(profile_id)`, and `delete_profile(profile_id)`.
-
-`get_compendium()` is intended for agents that need durable context outside the current room or current run. It works from the main menu, includes a `current_run` block while a run is active, and summarizes saved `saves/history/*.run` files for the active profile. Run history is capped to the 20 most recent files in the response so long-lived profiles do not create unbounded tool output.
-
-`search_wiki()` is the selective lookup path for durable card and relic text. It never returns the full game catalog: the mod first filters to the active profile's discovered card and relic IDs, then returns only the best fuzzy matches. Use `item_type="card"` or `item_type="relic"` when the query is known, and raise `limit` only when the default 10 results are not enough.
+Local `.env` files are ignored by git. If you change the mod's game API port, set the same `STS2_PORT` for the MCP bridge.
 
 ## For Developers
 

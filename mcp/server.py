@@ -29,8 +29,10 @@ def _parse_dotenv_value(raw_value: str) -> str:
         end = value.find(quote, 1)
         if end != -1:
             return value[1:end]
-    if "#" in value:
-        value = value.split("#", 1)[0].rstrip()
+    for marker in (" #", "\t#"):
+        if marker in value:
+            value = value.split(marker, 1)[0].rstrip()
+            break
     return value
 
 

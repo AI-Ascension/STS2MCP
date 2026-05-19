@@ -86,7 +86,12 @@ def test_non_endpoint_http_error_stays_text(server) -> None:
 
 
 def test_dotenv_loads_without_overriding_environment(server) -> None:
-    keys = ["STS2_MCP_AUTH_TOKEN", "STS2_HOST", "STS2_EXISTING"]
+    keys = [
+        "STS2_MCP_AUTH_TOKEN",
+        "STS2_HASH_TOKEN",
+        "STS2_HOST",
+        "STS2_EXISTING",
+    ]
     old_env = {key: os.environ.get(key) for key in keys}
     old_cwd = Path.cwd()
     try:
@@ -101,6 +106,7 @@ def test_dotenv_loads_without_overriding_environment(server) -> None:
                     [
                         "# ignored",
                         "STS2_MCP_AUTH_TOKEN=from-dotenv # inline comment",
+                        "STS2_HASH_TOKEN=hash#token",
                         'export STS2_HOST="127.0.0.1" # quoted inline comment',
                         "STS2_EXISTING=from-dotenv",
                     ]
@@ -111,6 +117,7 @@ def test_dotenv_loads_without_overriding_environment(server) -> None:
             server._load_dotenv()
 
         assert os.environ["STS2_MCP_AUTH_TOKEN"] == "from-dotenv"
+        assert os.environ["STS2_HASH_TOKEN"] == "hash#token"
         assert os.environ["STS2_HOST"] == "127.0.0.1"
         assert os.environ["STS2_EXISTING"] == "from-env"
     finally:

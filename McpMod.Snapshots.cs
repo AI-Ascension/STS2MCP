@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Godot;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Runs;
@@ -347,9 +349,11 @@ public static partial class McpMod
 
     private static string SanitizePathPart(string value)
     {
-        var invalid = Path.GetInvalidFileNameChars();
-        var chars = value.Select(ch => invalid.Contains(ch) || ch == '/' || ch == '\\' || ch == ':' ? '_' : ch).ToArray();
-        return new string(chars);
+        var invalid = new HashSet<char>(Path.GetInvalidFileNameChars()) { '/', '\\', ':' };
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value)
+            builder.Append(invalid.Contains(ch) ? '_' : ch);
+        return builder.ToString();
     }
 
     private static long? GetJsonInt64(JsonElement source, string propertyName)
@@ -508,7 +512,9 @@ public static partial class McpMod
         public string GameMode { get; set; } = "singleplayer";
         public string SaveFileName { get; set; } = SingleplayerRunSaveFileName;
         public string SourceSavePath { get; set; } = "";
+        [JsonIgnore]
         public string SnapshotPath { get; set; } = "";
+        [JsonIgnore]
         public string SnapshotSavePath { get; set; } = "";
         public bool Manual { get; set; }
         public string? RunId { get; set; }
