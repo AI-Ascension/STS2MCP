@@ -1,6 +1,15 @@
 bin/
 obj/
 out/
+dist/
+
+# Stub projects build artifacts (pre-built DLLs in stubs/libs* are tracked)
+stubs/GodotSharp/bin/
+stubs/GodotSharp/obj/
+stubs/Harmony/bin/
+stubs/Harmony/obj/
+stubs/sts2/bin/
+stubs/sts2/obj/
 
 # Python
 __pycache__/
