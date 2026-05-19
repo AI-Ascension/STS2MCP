@@ -516,6 +516,20 @@ public static partial class McpMod
                 else
                     SendMethodNotAllowed(response);
             }
+            else if (path == "/api/v1/compendium")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetCompendium(response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/wiki")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetWiki(request, response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
             else
             {
                 SendNotFound(response);

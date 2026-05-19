@@ -10,11 +10,7 @@ HTTP API served by the STS2_MCP mod on `localhost:15526`. No authentication. Loc
 - `GET  /api/v1/settings` — read settings and preferences
 - `GET  /api/v1/profile` — read current profile progress
 - `GET  /api/v1/compendium` — read Compendium-shaped profile progress
-- `GET  /api/v1/bestiary` — read monster and encounter metadata
-- `GET  /api/v1/glossary/cards` — read active-run card pool metadata
-- `GET  /api/v1/glossary/relics` — read active-run relic pool metadata
-- `GET  /api/v1/glossary/potions` — read active-run potion pool metadata
-- `GET  /api/v1/glossary/keywords` — read active-run keyword metadata
+- `GET  /api/v1/wiki` — fuzzy-search discovered card/relic wiki entries
 - `GET  /api/v1/profiles` — list profile slots
 - `POST /api/v1/profiles` — switch or delete profile slots
 - `GET  /api/v1/snapshots` — list current-run save snapshots
@@ -1155,6 +1151,127 @@ Example success shape:
   ]
 }
 ```
+
+### `GET /api/v1/compendium`
+
+Returns the active profile's progress grouped by the in-game Compendium cards:
+
+- `current_run`: present while a run is active. Includes a derived `run_id` in `{save_scope}:profile{profile_id}:{start_time}` format, plus `start_time`, `seed`, `save_time`, `run_time`, and run metadata read from `current_run.save`.
+- `card_library`: discovered card IDs and card pick/skip/win/loss stats. This endpoint intentionally reports profile-level progress; card rules text remains available through game state when cards are visible in a run.
+- `relic_collection`: discovered relic IDs. The profile save exposes discovery, but not a typed per-relic description or obtained-count catalog.
+- `potion_lab`: discovered potion IDs. The profile save exposes discovery, but not a typed per-potion rules text or lab metadata catalog.
+- `bestiary`: profile encounter/enemy fight stats. The in-game Bestiary card is currently marked future/locked, so this section is stats-only and does not expose a full enemy metadata catalog.
+- `character_stats`: per-character and global profile totals.
+- `run_history`: summaries of the active profile's saved `saves/history/*.run` files. If more than 20 files exist, the response includes the 20 most recent entries and the local `history_path`.
+
+The response is built from `SaveManager.Progress`, the active profile's `progress.save` path, and local run-history files under the same active Steam account. It does not scan every Steam account under the save root. Run-history parsing is bounded to the 20 most recent `.run` files in the response so profile pages with many saved runs do not return unbounded payloads.
+
+`current_run.run_id` is derived from save scope, profile id, and run `start_time`. Use it to identify one concrete run attempt. Use `seed` separately when grouping runs by generated content, because multiple attempts can share the same seed.
+
+```jsonc
+{
+  "profile_id": 1,
+  "current_run": {
+    "is_in_progress": true,
+    "profile_id": 1,
+    "save_scope": "modded",
+    "run_id": "modded:profile1:1778295706",
+    "start_time": 1778295706,
+    "seed": "2450ZAR9EF",
+    "run_time": 137
+  },
+  "sections": {
+    "card_library": { "status": "exposed", "discovered_ids": ["BASH"], "stats": [] },
+    "relic_collection": { "status": "partially_exposed", "discovered_ids": ["BURNING_BLOOD"] },
+    "potion_lab": { "status": "partially_exposed", "discovered_ids": [] },
+    "bestiary": { "status": "locked_in_ui", "encounter_stats": [], "enemy_stats": [] },
+    "character_stats": { "status": "exposed", "characters": [], "global": {} },
+    "run_history": {
+      "status": "exposed",
+      "entry_count": 10,
+      "entries": [
+        {
+          "id": "1774869148",
+          "run_id": "modded:profile1:1774869148",
+          "players": [{ "id": 1, "character": "CHARACTER.IRONCLAD" }],
+          "ascension": 0,
+          "win": false,
+          "run_time": 6541
+        }
+      ]
+    }
+  }
+}
+```
+
+### `GET /api/v1/wiki`
+
+Searches wiki-style card and relic entries available to the active profile. The endpoint requires a query, filters to the profile's discovered card and relic IDs, fuzzy-ranks the matches, and returns a bounded result set. It does not expose the full game catalog.
+
+Query parameters:
+
+| Parameter | Values | Default | Description |
+|---|---|---|---|
+| `query` or `q` | text | required | Fuzzy search text, such as `ironclad perfect strike` or `silver spoon`. |
+| `item_type` or `type` | `all`, `card`, `relic` | `all` | Restricts the search to one wiki kind. |
+| `limit` | integer | `10` | Maximum returned entries. The mod clamps values below 1 and above its internal maximum. |
+
+Card results include both `base` and `upgraded` variants when the card can be upgraded. The upgraded variant is built from a cloned preview, so the catalog model is not mutated.
+
+```http
+GET /api/v1/wiki?query=ironclad%20perfect%20strike&item_type=card&limit=3
+```
+
+```jsonc
+{
+  "status": "ok",
+  "profile_id": 1,
+  "query": "ironclad perfect strike",
+  "item_type": "card",
+  "limit": 3,
+  "scope": "active_profile_discovered_cards_and_relics",
+  "selection_policy": "Searches only cards and relics discovered by the active profile, then returns the best fuzzy matches instead of exposing the full catalog.",
+  "counts": {
+    "discovered_cards": 42,
+    "discovered_relics": 18,
+    "searched": 42,
+    "returned": 1
+  },
+  "results": [
+    {
+      "item_type": "card",
+      "id": "PERFECTED_STRIKE",
+      "name": "Perfected Strike",
+      "score": 775.123,
+      "rarity": "Common",
+      "type": "Attack",
+      "is_upgradable": true,
+      "base": {
+        "variant": "base",
+        "cost": "2",
+        "description": "Deal ... damage.",
+        "is_upgraded": false,
+        "keywords": []
+      },
+      "upgraded": {
+        "variant": "upgraded",
+        "cost": "2",
+        "description": "Deal ... damage.",
+        "is_upgraded": true,
+        "keywords": []
+      }
+    }
+  ]
+}
+```
+
+Relic searches use the same profile filter and ranking:
+
+```http
+GET /api/v1/wiki?query=silver%20spoon&item_type=relic
+```
+
+Relic results include `id`, `name`, `rarity`, `description`, and `keywords`.
 
 ### `GET /api/v1/profiles`
 

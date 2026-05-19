@@ -9,11 +9,7 @@ HTTP API on `localhost:15526`. No authentication.
 - `GET /api/v1/settings` — read settings and preferences
 - `GET /api/v1/profile` — read current profile progress
 - `GET /api/v1/compendium` — read Compendium-shaped profile progress
-- `GET /api/v1/bestiary` — read monster and encounter metadata
-- `GET /api/v1/glossary/cards` — read active-run card pool metadata
-- `GET /api/v1/glossary/relics` — read active-run relic pool metadata
-- `GET /api/v1/glossary/potions` — read active-run potion pool metadata
-- `GET /api/v1/glossary/keywords` — read active-run keyword metadata
+- `GET /api/v1/wiki` — fuzzy-search discovered card/relic wiki entries
 - `GET /api/v1/profiles` — list profile slots
 - `POST /api/v1/profiles` — switch or delete profile slots
 - `GET /api/v1/snapshots` — list current-run save snapshots
@@ -88,32 +84,29 @@ All POST requests use JSON body with `"action"` field. Action responses include 
 
 `GET /api/v1/profile` returns persistent progress for the active profile, including character stats, discoveries, achievements, epochs, and global run totals.
 
-`GET /api/v1/settings` returns `status: "ok"`, `kind: "settings"`, display, audio, gameplay, language, and mod-loading preferences.
-
-`GET /api/v1/bestiary` returns deterministic reflected monster and encounter metadata with `status`, `kind`, `monster_count`, `encounter_count`, `monsters`, and `encounters`. Profile-specific fight stats are also summarized under `/api/v1/compendium`.
-
-The `/api/v1/glossary/*` endpoints expose active-run pool metadata. They require a run in progress and are scoped to the current run/character context plus shared run pools such as Colorless cards, shared relics, and shared potions, not profile-wide discovered content. Card glossary items include upgrade availability plus upgraded-preview cost and description. Successful responses include `profile_id`, `progress_path`, `resolved_progress_path`, `profile_root`, `save_scope`, `current_run` save context, `kind`, `count`, and `items`; `current_run.run_id` and `current_run.seed` are included when `current_run.save` exposes them. If no run is active, they return HTTP 409 with `error_code: "run_not_in_progress"` and the same profile/save context fields. If run state cannot be read, they return HTTP 503 with `error_code: "run_state_unavailable"` and the same context fields.
-
 `GET /api/v1/compendium` returns the active profile grouped like the in-game Compendium:
 
-The top level includes `profile_id`, `progress_path`, `resolved_progress_path`, `profile_root`, and `save_scope`, matching `/api/v1/profile`.
-
-When a run is active, the response includes `current_run` with profile/save context and `id_format`. When `current_run.save` exposes `start_time`, the response also includes `current_run.run_id` in `{save_scope}:profile{profile_id}:{start_time}` format. This identifies the specific run attempt, while `seed` identifies the generated run content when present.
+When a run is active, the response includes `current_run.run_id` in `{save_scope}:profile{profile_id}:{start_time}` format. This identifies the specific run attempt, while `seed` identifies the generated run content.
 
 | Section | Status |
 |---|---|
-| `card_library` | Discovered cards and card stats; `/api/v1/glossary/cards` adds metadata when a run context exists. |
-| `relic_collection` | Discovered relic IDs; `/api/v1/glossary/relics` adds metadata when a run context exists. |
-| `potion_lab` | Discovered potion IDs; `/api/v1/glossary/potions` adds metadata when a run context exists. |
-| `bestiary` | Encounter/enemy profile stats plus `/api/v1/bestiary` model metadata. The game UI marks Bestiary as future/locked. |
+| `card_library` | Discovered cards plus pick/skip/win/loss stats. Card rules text is supplied by game state when cards are visible in a run. |
+| `relic_collection` | Discovered relic IDs. Profile data does not expose a typed per-relic description or obtained-count catalog. |
+| `potion_lab` | Discovered potion IDs. Profile data does not expose a typed per-potion rules text or lab metadata catalog. |
+| `bestiary` | Encounter/enemy profile fight stats. The game UI marks Bestiary as future/locked, so this is stats-only rather than a full enemy catalog. |
 | `character_stats` | Per-character and global totals. |
 | `run_history` | Summaries of the active profile's saved `saves/history/*.run` files, capped to the 20 most recent entries. |
 
-`GET /api/v1/profiles` returns the three profile slots with `status`, `kind`, `count`, and per-slot save context fields (`progress_path`, `resolved_progress_path`, `profile_root`, `save_scope`):
+Run history is resolved from the active Steam account's profile save root. `current_run.run_id` identifies one concrete attempt; `seed` identifies generated run content and can repeat across attempts.
 
-`GET /api/v1/profile` returns the active profile's progress with `status`, `kind: "profile"`, `profile_id`, save scope/path context, `resolved_progress_path`, and `current_run` when a run is active.
+`GET /api/v1/wiki?query=<text>&item_type=<all|card|relic>&limit=<n>` returns a bounded fuzzy-search result over the active profile's discovered cards and relics. `query` is required because this endpoint is intentionally selective and does not dump the full catalog. `item_type` defaults to `all`, and `limit` defaults to 10 with an internal maximum. Card results include both `base` and `upgraded` objects when the card can be upgraded.
 
-`GET /api/v1/compendium` returns the active profile's Compendium-shaped progress with `status`, `kind: "compendium"`, the same profile/save context, and grouped Compendium sections.
+Example searches:
+
+- `/api/v1/wiki?query=ironclad%20perfect%20strike&item_type=card`
+- `/api/v1/wiki?query=silver%20spoon&item_type=relic&limit=5`
+
+`GET /api/v1/profiles` returns the three profile slots:
 
 ```json
 {

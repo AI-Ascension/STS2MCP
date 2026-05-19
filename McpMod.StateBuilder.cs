@@ -969,20 +969,18 @@ public static partial class McpMod
             info["expected_player_count"] = lobby.Run?.Players?.Count ?? 0;
             info["connected_player_count"] = lobby.ConnectedPlayerIds?.Count ?? 0;
 
-            // IsAboutToBeginGame == "no players still in handshake AND every connected player is ready".
-            // It's the literal trigger for the host's TryBeginRun, so it doubles as both "all_ready" (matches
-            // the StartRunLobby semantic of 'every joined player is ready') and "is_about_to_begin".
+            // LoadRunLobby no longer exposes IsAboutToBeginGame in the public game API,
+            // so derive the same readiness summary from connected players and ready flags.
             // Without these fields, FormatLobbyMarkdown printed "All ready: false" unconditionally for load lobbies.
             bool aboutToBegin = false;
             try
             {
-                var aboutToBeginMethod = lobby.GetType().GetMethod(
-                    "IsAboutToBeginGame",
-                    System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic);
-                if (aboutToBeginMethod?.Invoke(lobby, null) is bool value)
-                    aboutToBegin = value;
+                var runPlayers = lobby.Run?.Players;
+                var connectedPlayerIds = lobby.ConnectedPlayerIds;
+                aboutToBegin = runPlayers != null
+                    && connectedPlayerIds != null
+                    && runPlayers.Count > 0
+                    && runPlayers.All(player => connectedPlayerIds.Contains(player.NetId) && lobby.IsPlayerReady(player.NetId));
             }
             catch { }
             info["all_ready"] = aboutToBegin;
