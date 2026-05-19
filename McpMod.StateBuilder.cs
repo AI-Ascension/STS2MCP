@@ -1265,6 +1265,29 @@ public static partial class McpMod
         state["potions"] = potions;
         state["max_potion_slots"] = player.MaxPotionCount;
 
+        // Master deck (full card collection, always available)
+        var deck = new List<Dictionary<string, object?>>();
+        foreach (var card in player.Deck.Cards)
+        {
+            string costDisplay;
+            if (card.EnergyCost.CostsX)
+                costDisplay = "X";
+            else
+                costDisplay = card.EnergyCost.GetAmountToSpend().ToString();
+
+            deck.Add(new Dictionary<string, object?>
+            {
+                ["id"] = card.Id.Entry,
+                ["name"] = SafeGetText(() => card.Title),
+                ["type"] = card.Type.ToString(),
+                ["cost"] = costDisplay,
+                ["description"] = SafeGetCardDescription(card),
+                ["rarity"] = card.Rarity.ToString(),
+                ["is_upgraded"] = card.IsUpgraded
+            });
+        }
+        state["deck"] = deck;
+
         return state;
     }
 
