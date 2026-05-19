@@ -178,15 +178,7 @@ STS2_PORT=15526
 STS2_MCP_AUTH_TOKEN=your-token
 ```
 
-When `STS2_MCP_AUTH_TOKEN` is set, the MCP bridge sends it to the game HTTP API as an `Authorization: Bearer ...` header on every request. This is a bridge client setting only: the current STS2_MCP game mod does not require or validate that token by itself. It exists so the MCP bridge can interoperate with a local proxy, tunnel, or future authenticated HTTP listener without changing tool calls.
-
-Shell environment variables take precedence over values in `mcp/.env`, which makes it safe to keep shared defaults in the file while overriding secrets in the launch environment. The parser supports simple `KEY=value`, `export KEY=value`, quoted values, and inline comments that begin after whitespace. Values such as `token#fragment` are preserved because `#` is only treated as a comment marker when preceded by whitespace.
-
-Local `.env` files are ignored by git. If you change the mod's game API port, set the same `STS2_PORT` for the MCP bridge.
-
-By default, the MCP bridge records a structured JSONL run log in `logs/run_<timestamp>-<id>.jsonl` and a token rollup summary in `logs/run_<timestamp>-<id>.summary.json` relative to the server working directory. The log captures MCP tool calls, STS2_MCP HTTP requests/responses, smart state-poll decisions, timings, SHA-256 hashes, bounded previews, estimated token usage, prompt/message turns, and explicit `log_agent_decision` annotations. Use `--disable-run-log` to turn it off, `--log-dir` or `STS2_MCP_LOG_DIR` to choose a location, `--log-preview-chars` to adjust previews, `--log-full-text` when you need complete response text for replay or evaluation, and `--tokenizer-profile` / `--tokenizer-name` options to label the estimator profile. Clients can call `log_model_message` for first-class prompt/turn accounting and `log_external_token_usage` to reconcile provider token counts with local estimates.
-
-`get_game_state` and `mp_get_game_state` wait briefly for actionable states by default, so agents do not immediately receive enemy-turn combat states or transient event/reward screens. Pass `wait_for_actionable=false` to either tool for immediate state reads.
+When `STS2_MCP_AUTH_TOKEN` is set, the MCP bridge sends it to the game HTTP API as an `Authorization: Bearer ...` header. Shell environment variables take precedence over values in `mcp/.env`. If you change the mod's game API port, set the same `STS2_PORT` for the MCP bridge.
 
 ## For Developers
 

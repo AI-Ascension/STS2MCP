@@ -14,9 +14,7 @@ import json
 import os
 import platform
 import sys
-import time
-import uuid
-from typing import Any, Awaitable, Callable
+from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -29,11 +27,6 @@ _base_url: str = "http://localhost:15526"
 _trust_env: bool = True
 _auth_token: str | None = None
 _http: httpx.AsyncClient | None = None
-_run_logger = RunLogger(enabled=False)
-_tool_call_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("tool_call_id", default=None)
-_tool_name: contextvars.ContextVar[str | None] = contextvars.ContextVar("tool_name", default=None)
-
-COMBAT_STATE_TYPES = {"monster", "elite", "boss"}
 
 
 def _parse_dotenv_value(raw_value: str) -> str:
@@ -1732,36 +1725,10 @@ def main():
     parser.add_argument("--token-estimation-method", default=None, help="Override token estimation method recorded in logs")
     args = parser.parse_args()
 
-    global _base_url, _trust_env, _run_logger
+    global _auth_token, _base_url, _trust_env
     _base_url = f"http://{args.host}:{args.port}"
     _trust_env = not args.no_trust_env
-    token_profile = TokenProfile.from_profile_name(args.tokenizer_profile).with_overrides(
-        model_family=args.token_model_family,
-        tokenizer_name=args.tokenizer_name,
-        tokenizer_version=args.tokenizer_version,
-        estimation_method=args.token_estimation_method,
-    )
-    _run_logger = RunLogger(
-        enabled=not args.disable_run_log,
-        log_dir=args.log_dir,
-        preview_chars=args.log_preview_chars,
-        include_full_text=args.log_full_text,
-        token_profile=token_profile,
-    )
-    _run_logger.start(
-        {
-            "base_url": _base_url,
-            "trust_env": _trust_env,
-            "argv": sys.argv,
-            "pid": os.getpid(),
-            "python_version": sys.version,
-            "platform": platform.platform(),
-            "cwd": os.getcwd(),
-            "log_full_text": args.log_full_text,
-            "log_preview_chars": args.log_preview_chars,
-            "token_profile": token_profile.to_dict(),
-        }
-    )
+    _auth_token = _read_auth_token()
 
     # Eagerly initialize the shared httpx client so the first request is fast
     _get_client()
