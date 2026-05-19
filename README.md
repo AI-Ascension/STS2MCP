@@ -30,7 +30,7 @@ To use a different game API port on the next launch, set `STS2_PORT` in the game
 STS2_PORT=15527
 ```
 
-Shell environment variables take precedence over `.env`, and the legacy `STS2_MCP.conf` port remains supported when `STS2_PORT` is unset.
+Shell environment variables take precedence over `.env`, and the legacy `STS2_MCP.conf` port remains supported when `STS2_PORT` is unset. The mod also checks a `.env` file in the game working directory. Restart the game after changing any port setting; the listener reads the port only during startup.
 
 > [!note]
 > The release DLL is a platform-agnostic .NET assembly — the same `STS2_MCP.dll` and `STS2_MCP.json` work on Windows, Linux, and macOS. No separate builds are needed.
@@ -106,15 +106,9 @@ multiplayer menu retry behavior:
 uv run --project mcp python scripts/test_mcp_server.py
 ```
 
-#### Optional run snapshots
-
-Launch the game with `STS2_MCP_SNAPSHOTS=1` to capture a snapshot every time the game saves the active run. Snapshots copy `current_run.save` or `current_run_mp.save` to a separate snapshot directory and include metadata such as profile, run ID, save time, mode, and source path.
-
-Set `STS2_MCP_SNAPSHOT_DIR` to choose the snapshot directory. Without it, snapshots are stored under the detected account save root in `sts2_mcp_snapshots`.
-
-Use `GET /api/v1/snapshots` to list snapshots, `POST /api/v1/snapshots` with `{"action":"create"}` to create one manually, and `{"action":"resume","snapshot_id":"..."}` to restore a snapshot to the active profile's current-run save slot. Restore is rejected while a run is in progress; after restoring, use the in-game Continue flow.
-
-Manual snapshots are rejected on map and shop screens. STS2 saves resume the latest visited room rather than the idle map screen, and shop saves do not persist the current merchant inventory. Choose a map node before snapshotting, and snapshot before entering a shop or after leaving it.
+For the stable endpoint envelopes, save/run context fields, structured error
+codes, glossary scope, action-readiness fields, and audit coverage, see
+[`docs/endpoint-contracts.md`](docs/endpoint-contracts.md).
 
 ### 2. Give Your AI Instructions to Interact with the Game
 
@@ -156,7 +150,7 @@ Add the server to your AI client's MCP config:
 
 Restart your Claude session after adding the config. To verify the MCP server is working, ask Claude to call `get_game_state` — with the game running, it should return the current game state.
 
-The MCP server accepts `--host` and `--port` options if you need non-default settings.
+The MCP server accepts `--host` and `--port` options if you need non-default settings. If the game mod is launched with a custom `STS2_PORT`, configure the MCP bridge to use the same port, for example `uv run --directory /path/to/STS2_MCP/mcp python server.py --port 15527`.
 
 Flag `--no-trust-env` can be used to disable `requests` from picking up proxy settings from the environment, which can cause connection issues if you are running the server in a container.
 
