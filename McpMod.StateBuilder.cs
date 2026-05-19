@@ -614,6 +614,12 @@ public static partial class McpMod
             result["player"] = BuildPlayerState(_player);
         }
 
+        // Always include map data so external tools can display it regardless of current screen
+        if (result["state_type"] as string != "map")
+        {
+            result["map"] = BuildMapState(runState);
+        }
+
         return result;
     }
 
