@@ -16,6 +16,8 @@ HTTP API on `localhost:15526`. No authentication.
 - `GET /api/v1/glossary/keywords` — read active-run keyword metadata
 - `GET /api/v1/profiles` — list profile slots
 - `POST /api/v1/profiles` — switch or delete profile slots
+- `GET /api/v1/snapshots` — list current-run save snapshots
+- `POST /api/v1/snapshots` — create or resume current-run save snapshots
 
 HTTP error responses include `status: "error"` and `error`; route, validation, read-endpoint, and action failures include `error_code`.
 Route-level failures include `error_code: "method_not_allowed"` for unsupported HTTP methods, `error_code: "not_found"` for unknown paths, and `error_code: "internal_error"` for unexpected top-level handler failures.
@@ -135,6 +137,21 @@ When a run is active, the response includes `current_run` with profile/save cont
 | `delete` | `profile_id`: 1-3 | Delete an inactive profile slot. The active profile is rejected. |
 
 Profile action validation uses non-2xx HTTP status codes: invalid profile IDs and unknown actions return HTTP 400; deleting the active profile and switching during a run return HTTP 409 with an `error_code`.
+
+### Snapshots
+
+Run snapshots are opt-in. Launch the game with `STS2_MCP_SNAPSHOTS=1` to snapshot the active run save every time the game writes `current_run.save` or `current_run_mp.save`. Set `STS2_MCP_SNAPSHOT_DIR` to override the snapshot directory.
+
+`GET /api/v1/snapshots` returns `status: "ok"`, `kind: "snapshots"`, `enabled`, `snapshot_root`, `count`, and snapshot metadata entries.
+
+`POST /api/v1/snapshots` supports:
+
+| Action | Parameters | When to Use |
+|---|---|---|
+| `create` | none | Copy the active profile's latest current-run save into a snapshot. Requires snapshots to be enabled. |
+| `resume` | `snapshot_id`: string | Restore a snapshot to the active profile's current-run save slot. Rejected while a run is in progress; use the in-game Continue flow after restoring. |
+
+Manual snapshot creation is rejected on map and shop screens because STS2 saves cannot restore those exact UI states.
 
 ### Combat
 

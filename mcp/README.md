@@ -18,6 +18,9 @@
 | `list_profiles()` | Profiles | List profile slots and active slot |
 | `switch_profile(profile_id)` | Profiles | Switch to a profile slot through the game UI |
 | `delete_profile(profile_id)` | Profiles | Delete an inactive profile slot |
+| `list_snapshots()` | Snapshots | List current-run save snapshots and snapshot feature status |
+| `create_snapshot()` | Snapshots | Create a snapshot from the active profile's current run save |
+| `resume_snapshot(snapshot_id)` | Snapshots | Restore a snapshot to the active profile's current run save slot |
 | `use_potion(slot, target?)` | General | Use a potion (works in and out of combat) |
 | `discard_potion(slot)` | General | Discard a potion to free up the slot |
 | `proceed_to_map()` | General | Proceed from rewards/rest site/shop/treasure to the map |
@@ -55,6 +58,8 @@ Profile, profile-list, and Compendium tools include `status`, `kind`, `profile_i
 Save/path context fields are normalized with forward slashes, including Windows absolute paths.
 
 Profile switch/delete failures are surfaced as structured endpoint errors with HTTP 400 for invalid input and HTTP 409 for state conflicts such as deleting the active profile or switching during a run.
+
+Snapshot capture is opt-in. Launch the game with `STS2_MCP_SNAPSHOTS=1` to create a snapshot every time the game saves `current_run.save` or `current_run_mp.save`. Set `STS2_MCP_SNAPSHOT_DIR` to override the snapshot directory. `resume_snapshot()` restores a selected snapshot on disk and is rejected while a run is in progress; continue from the in-game menu after restoring.
 
 POST validation failures preserve endpoint `error_code` values such as `invalid_json`, `missing_action`, `invalid_action_type`, `missing_profile_id`, `invalid_profile_id_type`, and `invalid_action_payload`.
 
