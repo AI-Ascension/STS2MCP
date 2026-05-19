@@ -78,7 +78,7 @@ public static partial class McpMod
         {
             sb.AppendLine("## Player (You)");
             string stars = topPlayer.TryGetValue("stars", out var s) && s != null ? $" | Stars: {s}" : "";
-            sb.AppendLine($"**{topPlayer["character"]}** - HP: {topPlayer["hp"]}/{topPlayer["max_hp"]} | Gold: {topPlayer["gold"]}{stars}");
+            sb.AppendLine($"**{topPlayer["character"]}** — HP: {topPlayer["hp"]}/{topPlayer["max_hp"]} | Gold: {topPlayer["gold"]}{stars}");
             sb.AppendLine();
 
             FormatListSection(sb, "Relics", topPlayer, "relics", r =>
@@ -86,13 +86,18 @@ public static partial class McpMod
                 string counter = r.TryGetValue("counter", out var c) && c != null ? $" [{c}]" : "";
                 return $"- **{r["name"]}**{counter}: {r["description"]}";
             });
-            FormatPotionsSection(sb, topPlayer);
+            FormatListSection(sb, "Potions", topPlayer, "potions", p => $"- [{p["slot"]}] **{p["name"]}**: {p["description"]}");
         }
 
         if (state.TryGetValue("battle", out var battleObj) && battleObj is Dictionary<string, object?> battle)
         {
-            var battlePlayer = state.TryGetValue("player", out var bp) && bp is Dictionary<string, object?> bpd ? bpd : null;
-            FormatBattleMarkdown(sb, battle, battlePlayer);
+            if (isMultiplayer)
+                FormatMultiplayerBattleMarkdown(sb, battle);
+            else
+            {
+                var battlePlayer = state.TryGetValue("player", out var bp) && bp is Dictionary<string, object?> bpd ? bpd : null;
+                FormatBattleMarkdown(sb, battle, battlePlayer);
+            }
         }
 
         if (state.TryGetValue("event", out var eventObj) && eventObj is Dictionary<string, object?> eventData)
@@ -187,167 +192,13 @@ public static partial class McpMod
         return sb.ToString();
     }
 
-    private static void FormatMenuMarkdown(StringBuilder sb, Dictionary<string, object?> state)
+    private static void FormatBattleMarkdown(StringBuilder sb, Dictionary<string, object?> battle, Dictionary<string, object?>? player)
     {
         var screen = state.TryGetValue("menu_screen", out var ms) ? ms?.ToString() ?? "main" : "main";
         sb.AppendLine($"## Menu: {screen}");
 
         if (state.TryGetValue("message", out var msg) && msg != null)
             sb.AppendLine(msg.ToString());
-        sb.AppendLine();
-
-        // MP lobby block — ready/ascension/roster — same shape on character_select and load_lobby
-        if (state.TryGetValue("lobby", out var lobbyObj) &&
-            lobbyObj is Dictionary<string, object?> lobby)
-        {
-            FormatLobbyMarkdown(sb, lobby);
-        }
-
-        // Multiplayer Join — friends list
-        if (state.TryGetValue("friends", out var friendsObj) &&
-            friendsObj is List<Dictionary<string, object?>> friends)
-        {
-            bool fastMp = state.TryGetValue("fast_mp", out var fastObj) && fastObj is true;
-            bool loading = state.TryGetValue("loading", out var loadingObj) && loadingObj is true;
-            bool noFriends = state.TryGetValue("no_friends", out var noObj) && noObj is true;
-
-            sb.AppendLine($"### Friends ({friends.Count})"
-                          + (fastMp ? "  _[FastMP — auto-joins localhost:33771]_" : "")
-                          + (loading ? "  _[loading...]_" : ""));
-            if (friends.Count == 0)
-            {
-                sb.AppendLine(noFriends
-                    ? "_No friends with open lobbies. Use `refresh` to retry._"
-                    : "_(empty)_");
-            }
-            else
-            {
-                foreach (var friend in friends)
-                {
-                    var idx = friend.GetValueOrDefault("index")?.ToString() ?? "?";
-                    var name = friend.GetValueOrDefault("name")?.ToString() ?? "(unknown)";
-                    var pid = friend.GetValueOrDefault("player_id")?.ToString() ?? "?";
-                    var enabled = !friend.TryGetValue("enabled", out var en) || en is not false;
-                    sb.AppendLine($"- `join_{idx}` **{name}** ({pid}){(enabled ? "" : " (disabled)")}");
-                }
-            }
-            sb.AppendLine();
-        }
-
-        if (state.TryGetValue("options", out var optionsObj) && optionsObj != null)
-            FormatMenuOptionsMarkdown(sb, optionsObj);
-
-        if (state.TryGetValue("characters", out var charactersObj) &&
-            charactersObj is List<Dictionary<string, object?>> characters &&
-            characters.Count > 0)
-        {
-            sb.AppendLine("### Characters");
-            foreach (var character in characters)
-            {
-                var id = character.GetValueOrDefault("id")?.ToString() ?? "?";
-                var name = character.GetValueOrDefault("name")?.ToString() ?? id;
-                var locked = character.TryGetValue("locked", out var lockedObj) && lockedObj is true ? " (LOCKED)" : "";
-                var hp = character.GetValueOrDefault("hp")?.ToString() ?? "?";
-                var gold = character.GetValueOrDefault("gold")?.ToString() ?? "?";
-                var energy = character.GetValueOrDefault("energy")?.ToString() ?? "?";
-                sb.AppendLine($"- `{id}` **{name}**{locked} - HP: {hp} | Gold: {gold} | Energy: {energy}");
-            }
-            sb.AppendLine();
-            sb.AppendLine("Use `menu_select` with an unlocked character ID or name, then `confirm`/`embark`.");
-            sb.AppendLine();
-        }
-    }
-
-    private static void FormatLobbyMarkdown(StringBuilder sb, Dictionary<string, object?> lobby)
-    {
-        var type = lobby.GetValueOrDefault("type")?.ToString() ?? "?";
-        var mode = lobby.GetValueOrDefault("game_mode")?.ToString() ?? "standard";
-        var asc = lobby.GetValueOrDefault("ascension")?.ToString() ?? "0";
-        var maxAsc = lobby.GetValueOrDefault("max_ascension")?.ToString();
-        var allReady = lobby.TryGetValue("all_ready", out var ar) && ar is true;
-        var aboutToBegin = lobby.TryGetValue("is_about_to_begin", out var ab) && ab is true;
-
-        sb.Append($"### Lobby ({type}, {mode}) — Ascension: {asc}");
-        if (!string.IsNullOrEmpty(maxAsc) && maxAsc != "0")
-            sb.Append($" / max {maxAsc}");
-        sb.AppendLine();
-        sb.AppendLine($"- All ready: **{allReady}**" + (aboutToBegin ? "  — about to begin" : ""));
-
-        // MP load lobby uses act/floor/connected_player_count/expected_player_count
-        if (lobby.TryGetValue("act", out var actObj))
-        {
-            var act = actObj?.ToString();
-            var floor = lobby.GetValueOrDefault("floor")?.ToString();
-            sb.AppendLine($"- Saved progress: act {act}, floor {floor}");
-        }
-        if (lobby.TryGetValue("connected_player_count", out var connObj))
-        {
-            var conn = connObj?.ToString();
-            var expected = lobby.GetValueOrDefault("expected_player_count")?.ToString();
-            sb.AppendLine($"- Connected: {conn}/{expected}");
-        }
-
-        if (lobby.TryGetValue("players", out var pObj) &&
-            pObj is List<Dictionary<string, object?>> pl &&
-            pl.Count > 0)
-        {
-            sb.AppendLine("- Players:");
-            foreach (var p in pl)
-            {
-                var local = p.TryGetValue("is_local", out var l) && l is true ? " (you)" : "";
-                var host = p.TryGetValue("is_host", out var h) && h is true ? " [host]" : "";
-                var ready = p.TryGetValue("is_ready", out var r) && r is true ? " ✓" : "";
-                var connected = p.TryGetValue("is_connected", out var c) ? (c is true ? "" : " (disconnected)") : "";
-                var name = p.GetValueOrDefault("platform_name")?.ToString();
-                var charName = p.GetValueOrDefault("character")?.ToString()
-                               ?? p.GetValueOrDefault("character_id")?.ToString() ?? "?";
-                var label = string.IsNullOrEmpty(name) ? p.GetValueOrDefault("id")?.ToString() ?? "?" : name;
-                sb.AppendLine($"  - {label}{local}{host}: {charName}{ready}{connected}");
-            }
-        }
-        sb.AppendLine();
-    }
-
-    private static void FormatGameOverMarkdown(StringBuilder sb, Dictionary<string, object?> state)
-    {
-        if (state.TryGetValue("game_over", out var gameOverObj) &&
-            gameOverObj is Dictionary<string, object?> gameOver)
-        {
-            if (gameOver.TryGetValue("message", out var msg) && msg != null)
-                sb.AppendLine(msg.ToString());
-            if (gameOver.TryGetValue("options", out var optionsObj) && optionsObj != null)
-                FormatMenuOptionsMarkdown(sb, optionsObj);
-        }
-    }
-
-    private static void FormatMenuOptionsMarkdown(StringBuilder sb, object optionsObj)
-    {
-        if (optionsObj is List<string> names && names.Count > 0)
-        {
-            sb.AppendLine("### Options");
-            foreach (var name in names)
-                sb.AppendLine($"- `{name}`");
-            sb.AppendLine();
-            return;
-        }
-
-        if (optionsObj is List<Dictionary<string, object?>> options && options.Count > 0)
-        {
-            sb.AppendLine("### Options");
-            foreach (var opt in options)
-            {
-                var name = opt.GetValueOrDefault("name")?.ToString() ?? "?";
-                var enabled = !opt.TryGetValue("enabled", out var enabledObj) || enabledObj is not false;
-                sb.AppendLine($"- `{name}`{(enabled ? "" : " (disabled)")}");
-            }
-            sb.AppendLine();
-        }
-    }
-
-    private static void FormatBattleMarkdown(StringBuilder sb, Dictionary<string, object?> battle, Dictionary<string, object?>? player)
-    {
-        string allReady = battle.TryGetValue("all_players_ready", out var ar) ? $" | All Ready: {ar}" : "";
-        sb.AppendLine($"**Round {battle["round"]}** | Turn: {battle["turn"]} | Play Phase: {battle["is_play_phase"]}{allReady}");
         sb.AppendLine();
 
         if (player != null)
@@ -571,13 +422,6 @@ public static partial class McpMod
 
     private static void FormatShopMarkdown(StringBuilder sb, Dictionary<string, object?> shop)
     {
-        if (shop.TryGetValue("error", out var err) && err != null)
-        {
-            sb.AppendLine("## Shop");
-            sb.AppendLine($"**Note:** {err}");
-            sb.AppendLine();
-        }
-
         if (shop.TryGetValue("items", out var itemsObj) && itemsObj is List<Dictionary<string, object?>> items)
         {
             sb.AppendLine("## Shop Inventory");
@@ -634,29 +478,6 @@ public static partial class McpMod
     }
 
     private static void FormatFakeMerchantMarkdown(StringBuilder sb, Dictionary<string, object?> fm)
-    {
-        string name = fm.TryGetValue("event_name", out var n) && n != null ? n.ToString()! : "Fake Merchant";
-        bool startedFight = fm.TryGetValue("started_fight", out var sf) && sf is true;
-
-        sb.AppendLine($"## Event: {name}");
-        sb.AppendLine();
-
-        if (startedFight)
-        {
-            sb.AppendLine("*The fake merchant has been defeated. Use `proceed` to open the map.*");
-            sb.AppendLine();
-            return;
-        }
-
-        sb.AppendLine("*This is a fake merchant selling dubious relics. You can browse and buy, or throw a Foul Potion (use_potion) to start a fight.*");
-        sb.AppendLine();
-
-        // Reuse shop formatting for the nested shop object
-        if (fm.TryGetValue("shop", out var shopObj) && shopObj is Dictionary<string, object?> shopData)
-            FormatShopMarkdown(sb, shopData);
-    }
-
-    private static void FormatMapMarkdown(StringBuilder sb, Dictionary<string, object?> map)
     {
         // Path taken
         if (map.TryGetValue("visited", out var visitedObj) && visitedObj is List<Dictionary<string, object?>> visited && visited.Count > 0)
@@ -896,96 +717,6 @@ public static partial class McpMod
     }
 
     private static void FormatBundleSelectMarkdown(StringBuilder sb, Dictionary<string, object?> bundleSelect)
-    {
-        sb.AppendLine("## Bundle Selection");
-
-        if (bundleSelect.TryGetValue("prompt", out var promptObj) && promptObj != null)
-            sb.AppendLine($"*{promptObj}*");
-        sb.AppendLine();
-
-        if (bundleSelect.TryGetValue("bundles", out var bundlesObj) && bundlesObj is List<Dictionary<string, object?>> bundles && bundles.Count > 0)
-        {
-            sb.AppendLine("### Bundles");
-            foreach (var bundle in bundles)
-            {
-                sb.AppendLine($"- [{bundle["index"]}] Bundle with {bundle["card_count"]} card(s)");
-                if (bundle.TryGetValue("cards", out var cardsObj) && cardsObj is List<Dictionary<string, object?>> cards)
-                {
-                    foreach (var card in cards)
-                        sb.AppendLine($"  {FormatCardDetails(card)}");
-                }
-            }
-            sb.AppendLine();
-        }
-
-        bool preview = bundleSelect.TryGetValue("preview_showing", out var pv) && pv is true;
-        bool canConfirm = bundleSelect.TryGetValue("can_confirm", out var cc) && cc is true;
-        bool canCancel = bundleSelect.TryGetValue("can_cancel", out var cn) && cn is true;
-
-        if (preview)
-        {
-            sb.AppendLine("**Preview is showing** - use `confirm_bundle_selection()` to confirm or `cancel_bundle_selection()` to go back.");
-            if (bundleSelect.TryGetValue("preview_cards", out var previewCardsObj) && previewCardsObj is List<Dictionary<string, object?>> previewCards && previewCards.Count > 0)
-            {
-                sb.AppendLine("### Preview Cards");
-                foreach (var card in previewCards)
-                    sb.AppendLine($"- {FormatCardDetails(card)}");
-                sb.AppendLine();
-            }
-        }
-        else
-        {
-            sb.AppendLine($"Use `select_bundle(index)` to open a bundle preview. Can confirm: {(canConfirm ? "Yes" : "No")} | Can cancel: {(canCancel ? "Yes" : "No")}");
-            sb.AppendLine();
-        }
-    }
-
-    private static void FormatCrystalSphereMarkdown(StringBuilder sb, Dictionary<string, object?> crystalSphere)
-    {
-        sb.AppendLine("## Crystal Sphere");
-
-        if (crystalSphere.TryGetValue("instructions_title", out var titleObj) && titleObj != null)
-            sb.AppendLine($"**{titleObj}**");
-        if (crystalSphere.TryGetValue("instructions_description", out var descObj) && descObj != null)
-            sb.AppendLine(descObj.ToString());
-        sb.AppendLine();
-
-        string tool = crystalSphere.TryGetValue("tool", out var toolObj) ? toolObj?.ToString() ?? "none" : "none";
-        string divinationsLeft = crystalSphere.TryGetValue("divinations_left_text", out var dlObj) && dlObj != null
-            ? dlObj.ToString()!
-            : "Unknown";
-        sb.AppendLine($"**Tool:** {tool} | **Divinations:** {divinationsLeft}");
-        sb.AppendLine();
-
-        if (crystalSphere.TryGetValue("clickable_cells", out var cellsObj) && cellsObj is List<Dictionary<string, object?>> clickableCells && clickableCells.Count > 0)
-        {
-            sb.AppendLine("### Clickable Cells");
-            foreach (var cell in clickableCells)
-                sb.AppendLine($"- ({cell["x"]}, {cell["y"]})");
-            sb.AppendLine();
-        }
-
-        if (crystalSphere.TryGetValue("revealed_items", out var itemsObj) && itemsObj is List<Dictionary<string, object?>> revealedItems && revealedItems.Count > 0)
-        {
-            sb.AppendLine("### Revealed Items");
-            foreach (var item in revealedItems)
-                sb.AppendLine($"- **{item["item_type"]}** at ({item["x"]}, {item["y"]}) size {item["width"]}x{item["height"]}");
-            sb.AppendLine();
-        }
-
-        bool canProceed = crystalSphere.TryGetValue("can_proceed", out var cp) && cp is true;
-        if (canProceed)
-        {
-            sb.AppendLine("Use `crystal_sphere_proceed()` to continue.");
-        }
-        else
-        {
-            sb.AppendLine("Use `crystal_sphere_set_tool(tool)` with `big` or `small`, then `crystal_sphere_click_cell(x, y)`.");
-        }
-        sb.AppendLine();
-    }
-
-    private static void FormatTreasureMarkdown(StringBuilder sb, Dictionary<string, object?> treasure)
     {
         if (treasure.TryGetValue("relics", out var relicsObj) && relicsObj is List<Dictionary<string, object?>> relics && relics.Count > 0)
         {

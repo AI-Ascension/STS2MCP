@@ -620,6 +620,13 @@ public static partial class McpMod
             result["map"] = BuildMapState(runState);
         }
 
+        // Always include full player data (relics, potions, deck, etc.) on every screen
+        var _player = LocalContext.GetMe(runState);
+        if (_player != null)
+        {
+            result["player"] = BuildPlayerState(_player);
+        }
+
         return result;
     }
 
@@ -1076,10 +1083,6 @@ public static partial class McpMod
         battle["round"] = combatState.RoundNumber;
         battle["turn"] = combatState.CurrentSide.ToString().ToLower();
         battle["is_play_phase"] = CombatManager.Instance.IsPlayPhase;
-        battle["player_actions_disabled"] = CombatManager.Instance.PlayerActionsDisabled;
-        var endTurnBlockedReason = GetEndTurnBlockedReason();
-        battle["can_end_turn"] = endTurnBlockedReason == null;
-        battle["end_turn_blocked_reason"] = endTurnBlockedReason;
 
         // Enemies
         var enemies = new List<Dictionary<string, object?>>();
@@ -1567,7 +1570,7 @@ public static partial class McpMod
     {
         var state = new Dictionary<string, object?>();
 
-        var eventModel = eventRoom.LocalMutableEvent ?? eventRoom.CanonicalEvent;
+        var eventModel = eventRoom.CanonicalEvent;
         bool isAncient = eventModel is AncientEventModel;
         state["event_id"] = eventModel.Id.Entry;
         state["event_name"] = SafeGetText(() => eventModel.Title);
@@ -1746,11 +1749,6 @@ public static partial class McpMod
     {
         var state = new Dictionary<string, object?>();
 
-        var optionButtons = NRestSiteRoom.Instance != null
-            ? FindAll<NRestSiteButton>(NRestSiteRoom.Instance)
-                .Where(button => button.Visible && button.IsVisibleInTree())
-                .ToList()
-            : new List<NRestSiteButton>();
         var options = new List<Dictionary<string, object?>>();
 
         int index = 0;
@@ -1782,15 +1780,6 @@ public static partial class McpMod
         var state = new Dictionary<string, object?>();
 
         var inventory = merchantRoom.Inventory;
-        if (inventory == null)
-        {
-            state["items"] = new List<Dictionary<string, object?>>();
-            state["can_proceed"] = IsControlVisibleOrActionable(NMerchantRoom.Instance?.ProceedButton);
-            state["error"] =
-                "Shop inventory is not ready yet (null). Often happens right after entering the merchant from the map; retry in a moment.";
-            return state;
-        }
-
         var items = new List<Dictionary<string, object?>>();
         int index = 0;
 
