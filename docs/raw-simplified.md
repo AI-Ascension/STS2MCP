@@ -178,6 +178,8 @@ Manual snapshot creation is rejected on map and shop screens because STS2 saves 
 
 ### Map (`map`)
 
+`map.boss` includes the upcoming boss coordinate plus stable `id` and readable `name` fields when the run map exposes boss identity. `map.bosses` contains all boss entries for maps with more than one boss.
+
 | Action | Parameters | When to Use |
 |---|---|---|
 | `choose_map_node` | `index`: int | Travel to a visible travelable node from `next_options`. |

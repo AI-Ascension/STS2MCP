@@ -1987,18 +1987,120 @@ public static partial class McpMod
             nodes.Add(BuildMapNode(pt));
 
         // Boss
-        nodes.Add(BuildMapNode(map.BossMapPoint));
+        var primaryBossId = ReadModelIdEntry(runState, "BossId")
+            ?? ReadModelIdEntry(map, "BossId")
+            ?? ReadModelIdEntry(map.BossMapPoint, "BossId", "EncounterId");
+        var bossNode = BuildMapNode(map.BossMapPoint);
+        AddBossIdentity(bossNode, primaryBossId);
+        nodes.Add(bossNode);
+
+        Dictionary<string, object?>? secondBoss = null;
         if (map.SecondBossMapPoint != null)
-            nodes.Add(BuildMapNode(map.SecondBossMapPoint));
+        {
+            var secondBossId = ReadModelIdEntry(runState, "SecondBossId")
+                ?? ReadModelIdEntry(map, "SecondBossId")
+                ?? ReadModelIdEntry(map.SecondBossMapPoint, "SecondBossId", "BossId", "EncounterId");
+            var secondBossNode = BuildMapNode(map.SecondBossMapPoint);
+            AddBossIdentity(secondBossNode, secondBossId);
+            nodes.Add(secondBossNode);
+            secondBoss = BuildBossInfo(map.SecondBossMapPoint, secondBossId);
+        }
 
         state["nodes"] = nodes;
-        state["boss"] = new Dictionary<string, object?>
-        {
-            ["col"] = map.BossMapPoint.coord.col,
-            ["row"] = map.BossMapPoint.coord.row
-        };
+        var primaryBoss = BuildBossInfo(map.BossMapPoint, primaryBossId);
+        state["boss"] = primaryBoss;
+        state["bosses"] = secondBoss != null
+            ? new List<Dictionary<string, object?>> { primaryBoss, secondBoss }
+            : new List<Dictionary<string, object?>> { primaryBoss };
 
         return state;
+    }
+
+    private static Dictionary<string, object?> BuildBossInfo(MapPoint pt, string? bossId)
+    {
+        var boss = new Dictionary<string, object?>
+        {
+            ["col"] = pt.coord.col,
+            ["row"] = pt.coord.row
+        };
+        AddBossIdentity(boss, bossId);
+        return boss;
+    }
+
+    private static void AddBossIdentity(Dictionary<string, object?> target, string? bossId)
+    {
+        if (string.IsNullOrWhiteSpace(bossId))
+            return;
+
+        target["id"] = bossId;
+        target["name"] = BuildDisplayNameFromId(bossId);
+    }
+
+    private static string? ReadModelIdEntry(object? source, params string[] memberNames)
+    {
+        foreach (var memberName in memberNames)
+        {
+            var value = GetBossMemberValue(source, memberName);
+            if (value == null)
+                continue;
+
+            var entry = GetBossMemberValue(value, "Entry")?.ToString();
+            if (!string.IsNullOrWhiteSpace(entry))
+                return entry;
+
+            var text = value.ToString();
+            if (!string.IsNullOrWhiteSpace(text))
+                return text;
+        }
+
+        return null;
+    }
+
+    private static object? GetBossMemberValue(object? source, string memberName)
+    {
+        if (source == null)
+            return null;
+
+        const System.Reflection.BindingFlags Flags =
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic;
+
+        for (var type = source.GetType(); type != null; type = type.BaseType)
+        {
+            var property = type.GetProperty(memberName, Flags);
+            if (property != null && property.GetIndexParameters().Length == 0)
+            {
+                try { return property.GetValue(source); }
+                catch { return null; }
+            }
+
+            var field = type.GetField(memberName, Flags);
+            if (field != null)
+            {
+                try { return field.GetValue(source); }
+                catch { return null; }
+            }
+        }
+
+        return null;
+    }
+
+    private static string BuildDisplayNameFromId(string id)
+    {
+        var lastSegment = id
+            .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .LastOrDefault() ?? id;
+        if (lastSegment.EndsWith("_BOSS", StringComparison.OrdinalIgnoreCase))
+            lastSegment = lastSegment[..^5];
+
+        var words = lastSegment
+            .Replace('-', '_')
+            .Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return words.Length == 0
+            ? id
+            : string.Join(" ", words.Select(word => char.ToUpperInvariant(word[0]) + word[1..].ToLowerInvariant()));
     }
 
     private static Dictionary<string, object?> BuildMapNode(MapPoint pt)
