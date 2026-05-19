@@ -1515,6 +1515,85 @@ public static partial class McpMod
         };
     }
 
+    private static Dictionary<string, object?> TryRevealVisibleTimelineEpoch(
+        NTimelineScreen timelineScreen,
+        List<string> unrevealedEpochs)
+    {
+        var pendingSet = new HashSet<string>(unrevealedEpochs, System.StringComparer.OrdinalIgnoreCase);
+        var revealableSlots = FindAll<NEpochSlot>(timelineScreen)
+            .Where(slot =>
+            {
+                try
+                {
+                    var epochId = slot.model?.Id;
+                    return slot.State == EpochSlotState.Obtained &&
+                           epochId != null &&
+                           pendingSet.Contains(epochId) &&
+                           slot.HasSpawned &&
+                           IsNodeVisible(slot) &&
+                           slot is NClickableControl;
+                }
+                catch (System.ObjectDisposedException)
+                {
+                    return false;
+                }
+            })
+            .OrderBy(slot => slot.GlobalPosition.Y)
+            .ThenBy(slot => slot.GlobalPosition.X)
+            .ToList();
+
+        if (revealableSlots.Count == 0)
+        {
+            var message = IsTimelineScreenBusy(timelineScreen)
+                ? "Timeline has pending epoch reveals, but the revealable epoch slot is still spawning; retry after the next state poll"
+                : "Timeline has pending epoch reveals, but no actionable obtained epoch slot is visible yet; retry after the next state poll";
+
+            return new Dictionary<string, object?>
+            {
+                ["status"] = "ok",
+                ["message"] = message,
+                ["pending_epoch_ids"] = unrevealedEpochs,
+                ["retry"] = true
+            };
+        }
+
+        var slotToReveal = revealableSlots[0];
+        var epochId = slotToReveal.model.Id;
+        try
+        {
+            ((NClickableControl)slotToReveal).ForceClick();
+            return new Dictionary<string, object?>
+            {
+                ["status"] = "ok",
+                ["message"] = $"Revealing timeline epoch {epochId}",
+                ["revealed_epoch_id"] = epochId,
+                ["pending_epoch_ids"] = unrevealedEpochs
+            };
+        }
+        catch (System.ObjectDisposedException)
+        {
+            return new Dictionary<string, object?>
+            {
+                ["status"] = "ok",
+                ["message"] = "Timeline changed before the epoch reveal could be clicked; retry after the next state poll",
+                ["pending_epoch_ids"] = unrevealedEpochs,
+                ["retry"] = true
+            };
+        }
+    }
+
+    private static Dictionary<string, object?> TimelineUnlocksNeedManualRevealFromOpenTimeline(List<string> unrevealedEpochs)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["status"] = "ok",
+            ["message"] = "Timeline has obtained epochs without visible slots; no revealable epoch slot is available through automation",
+            ["pending_epoch_ids"] = unrevealedEpochs,
+            ["manual_action_required"] = true,
+            ["done"] = true
+        };
+    }
+
     private static Dictionary<string, object?> TimelineUnlocksNeedManualReveal(List<string> unrevealedEpochs)
     {
         return new Dictionary<string, object?>
