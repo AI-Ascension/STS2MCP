@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
@@ -934,15 +935,67 @@ public static partial class McpMod
             return Error("Crystal Sphere screen is not open");
 
         var proceedButton = screen.GetNodeOrNull<NProceedButton>("%ProceedButton");
-        if (proceedButton is not { IsEnabled: true })
+        bool noDivinationsLeft = CrystalSphereHasNoDivinationsLeft(screen);
+        bool canUseProceed = proceedButton != null
+            && proceedButton.Visible
+            && proceedButton.IsVisibleInTree()
+            && (proceedButton.IsEnabled || noDivinationsLeft);
+
+        if (!canUseProceed)
             return Error("Crystal Sphere proceed button is not enabled");
 
-        proceedButton.ForceClick();
+        var proceed = proceedButton!;
+        string proceedPath = InvokeCrystalSphereProceed(screen, proceed);
         return new Dictionary<string, object?>
         {
             ["status"] = "ok",
-            ["message"] = "Proceeding from Crystal Sphere"
+            ["message"] = proceed.IsEnabled
+                ? $"Proceeding from Crystal Sphere via {proceedPath}"
+                : $"Proceeding from Crystal Sphere after zero-divination fallback via {proceedPath}"
         };
+    }
+
+    private static string InvokeCrystalSphereProceed(NCrystalSphereScreen screen, NProceedButton proceedButton)
+    {
+        var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        foreach (string methodName in new[] { "OnProceedButtonPressed", "OnProceedButtonReleased" })
+        {
+            var method = screen.GetType().GetMethods(flags)
+                .FirstOrDefault(m => m.Name == methodName && m.GetParameters().Length == 1);
+            if (method == null)
+                continue;
+
+            method.Invoke(screen, new object?[] { proceedButton });
+            RemoveCrystalSphereOverlay(screen);
+            return $"{methodName}+remove_overlay";
+        }
+
+        proceedButton.EmitSignal(new StringName("pressed"), proceedButton);
+        proceedButton.EmitSignal(NClickableControl.SignalName.Released, proceedButton);
+        RemoveCrystalSphereOverlay(screen);
+        return "pressed+released signals+remove_overlay";
+    }
+
+    private static void RemoveCrystalSphereOverlay(NCrystalSphereScreen screen)
+    {
+        var overlayStack = NOverlayStack.Instance;
+        if (overlayStack?.Peek() == screen)
+            overlayStack.Remove(screen);
+    }
+
+    private static bool CrystalSphereHasNoDivinationsLeft(NCrystalSphereScreen screen)
+    {
+        var divinationsLeft = screen.GetNodeOrNull<Godot.Control>("%DivinationsLeft");
+        if (divinationsLeft == null)
+            return false;
+
+        var textVariant = divinationsLeft.Get("text");
+        if (textVariant.VariantType == Godot.Variant.Type.Nil)
+            return false;
+
+        string text = StripRichTextTags(textVariant.AsString());
+        return text.Contains("0 Divinations remain", System.StringComparison.OrdinalIgnoreCase)
+            || text.Contains("0 Divination remain", System.StringComparison.OrdinalIgnoreCase);
     }
 
     private static Creature? ResolveTarget(CombatState combatState, string entityId)

@@ -29,6 +29,7 @@ public static partial class McpMod
 
     private static HttpListener? _listener;
     private static Thread? _serverThread;
+    private static int _serverPort = DefaultPort;
     private static string[] _boundPrefixes = Array.Empty<string>();
     private static readonly ConcurrentQueue<Action> _mainThreadQueue = new();
     internal static readonly JsonSerializerOptions _jsonOptions = new()
@@ -191,6 +192,7 @@ public static partial class McpMod
             tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(ProcessMainThreadQueue));
 
             int port = LoadPort();
+            _serverPort = port;
             StartHttpServer(port);
 
             _serverThread = new Thread(ServerLoop)
@@ -335,17 +337,68 @@ public static partial class McpMod
 
     private static void ServerLoop()
     {
-        while (_listener?.IsListening == true)
+        while (true)
         {
+            var listener = _listener;
+            if (listener?.IsListening != true)
+            {
+                GD.PrintErr("[STS2 MCP] HTTP listener is not active; attempting to restart.");
+                if (!TryRestartHttpServer())
+                    break;
+                continue;
+            }
+
             try
             {
-                var context = _listener.GetContext();
+                var context = listener.GetContext();
                 // Handle each request asynchronously so we don't block the listener
                 ThreadPool.QueueUserWorkItem(_ => HandleRequest(context));
             }
-            catch (HttpListenerException) { break; }
-            catch (ObjectDisposedException) { break; }
+            catch (HttpListenerException ex)
+            {
+                if (_listener?.IsListening == true)
+                {
+                    GD.PrintErr($"[STS2 MCP] Transient listener error: {ex.Message}");
+                    continue;
+                }
+
+                GD.PrintErr($"[STS2 MCP] Listener stopped: {ex.Message}; attempting restart.");
+                if (!TryRestartHttpServer())
+                    break;
+            }
+            catch (ObjectDisposedException ex)
+            {
+                GD.PrintErr($"[STS2 MCP] Listener disposed: {ex.Message}; attempting restart.");
+                if (!TryRestartHttpServer())
+                    break;
+            }
         }
+
+        GD.PrintErr("[STS2 MCP] HTTP server loop exited.");
+    }
+
+    private static bool TryRestartHttpServer()
+    {
+        for (int attempt = 1; attempt <= 5; attempt++)
+        {
+            try
+            {
+                try { _listener?.Close(); } catch { }
+                _listener = null;
+                _boundPrefixes = Array.Empty<string>();
+
+                StartHttpServer(_serverPort);
+                GD.Print($"[STS2 MCP] HTTP listener restarted on {string.Join(", ", _boundPrefixes)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[STS2 MCP] Listener restart attempt {attempt}/5 failed: {ex.Message}");
+                Thread.Sleep(1000);
+            }
+        }
+
+        return false;
     }
 
     private static void HandleRequest(HttpListenerContext context)
