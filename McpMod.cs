@@ -29,6 +29,7 @@ public static partial class McpMod
 
     private static HttpListener? _listener;
     private static Thread? _serverThread;
+    private static int _serverPort = DefaultPort;
     private static string[] _boundPrefixes = Array.Empty<string>();
     private static readonly ConcurrentQueue<Action> _mainThreadQueue = new();
     internal static readonly JsonSerializerOptions _jsonOptions = new()
@@ -158,13 +159,8 @@ public static partial class McpMod
     private static string ParseDotEnvValue(string rawValue)
     {
         var value = rawValue.Trim();
-        if (value.Length >= 2 && (value[0] == '\'' || value[0] == '"'))
-        {
-            var quote = value[0];
-            var closingQuoteIndex = value.IndexOf(quote, 1);
-            if (closingQuoteIndex != -1)
-                return value[1..closingQuoteIndex];
-        }
+        if (value.Length >= 2 && value[0] == value[^1] && (value[0] == '\'' || value[0] == '"'))
+            return value[1..^1];
 
         var commentIndex = value.IndexOf('#');
         if (commentIndex >= 0)
@@ -189,12 +185,14 @@ public static partial class McpMod
         {
             // Optional settings UI patches should not block the HTTP bridge itself.
             TryApplyHarmonyPatches();
+            InitializeSnapshotSupport();
 
             // Connect to main thread process frame for action execution
             var tree = (SceneTree)Engine.GetMainLoop();
             tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(ProcessMainThreadQueue));
 
             int port = LoadPort();
+            _serverPort = port;
             StartHttpServer(port);
 
             _serverThread = new Thread(ServerLoop)
@@ -339,17 +337,68 @@ public static partial class McpMod
 
     private static void ServerLoop()
     {
-        while (_listener?.IsListening == true)
+        while (true)
         {
+            var listener = _listener;
+            if (listener?.IsListening != true)
+            {
+                GD.PrintErr("[STS2 MCP] HTTP listener is not active; attempting to restart.");
+                if (!TryRestartHttpServer())
+                    break;
+                continue;
+            }
+
             try
             {
-                var context = _listener.GetContext();
+                var context = listener.GetContext();
                 // Handle each request asynchronously so we don't block the listener
                 ThreadPool.QueueUserWorkItem(_ => HandleRequest(context));
             }
-            catch (HttpListenerException) { break; }
-            catch (ObjectDisposedException) { break; }
+            catch (HttpListenerException ex)
+            {
+                if (_listener?.IsListening == true)
+                {
+                    GD.PrintErr($"[STS2 MCP] Transient listener error: {ex.Message}");
+                    continue;
+                }
+
+                GD.PrintErr($"[STS2 MCP] Listener stopped: {ex.Message}; attempting restart.");
+                if (!TryRestartHttpServer())
+                    break;
+            }
+            catch (ObjectDisposedException ex)
+            {
+                GD.PrintErr($"[STS2 MCP] Listener disposed: {ex.Message}; attempting restart.");
+                if (!TryRestartHttpServer())
+                    break;
+            }
         }
+
+        GD.PrintErr("[STS2 MCP] HTTP server loop exited.");
+    }
+
+    private static bool TryRestartHttpServer()
+    {
+        for (int attempt = 1; attempt <= 5; attempt++)
+        {
+            try
+            {
+                try { _listener?.Close(); } catch { }
+                _listener = null;
+                _boundPrefixes = Array.Empty<string>();
+
+                StartHttpServer(_serverPort);
+                GD.Print($"[STS2 MCP] HTTP listener restarted on {string.Join(", ", _boundPrefixes)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[STS2 MCP] Listener restart attempt {attempt}/5 failed: {ex.Message}");
+                Thread.Sleep(1000);
+            }
+        }
+
+        return false;
     }
 
     private static void HandleRequest(HttpListenerContext context)
@@ -457,6 +506,15 @@ public static partial class McpMod
                 else
                     SendMethodNotAllowed(response);
             }
+            else if (path == "/api/v1/snapshots")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetSnapshots(response);
+                else if (request.HttpMethod == "POST")
+                    HandlePostSnapshots(request, response);
+                else
+                    SendMethodNotAllowed(response);
+            }
             else if (path == "/api/v1/profile")
             {
                 if (request.HttpMethod == "GET")
@@ -506,6 +564,20 @@ public static partial class McpMod
                 else
                     SendMethodNotAllowed(response);
             }
+            else if (path == "/api/v1/compendium")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetCompendium(response);
+                else
+                    SendMethodNotAllowed(response);
+            }
+            else if (path == "/api/v1/wiki")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetWiki(request, response);
+                else
+                    SendMethodNotAllowed(response);
+            }
             else
             {
                 SendNotFound(response);
@@ -532,13 +604,16 @@ public static partial class McpMod
             new() { ["method"] = "GET", ["path"] = "/api/v1/settings", ["description"] = "Read settings and preferences" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/profile", ["description"] = "Read active profile progress plus normalized save/run context" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/compendium", ["description"] = "Read Compendium-shaped profile progress plus normalized save/run context" },
+            new() { ["method"] = "GET", ["path"] = "/api/v1/wiki", ["description"] = "Search discovered card and relic wiki entries" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/bestiary", ["description"] = "Read monster and encounter metadata" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/glossary/cards", ["description"] = "Read active-run card pool metadata plus profile/save/run context" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/glossary/relics", ["description"] = "Read active-run relic pool metadata plus profile/save/run context" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/glossary/potions", ["description"] = "Read active-run potion pool metadata plus profile/save/run context" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/glossary/keywords", ["description"] = "Read active-run keyword metadata plus profile/save/run context" },
             new() { ["method"] = "GET", ["path"] = "/api/v1/profiles", ["description"] = "List profile slots plus normalized save context" },
-            new() { ["method"] = "POST", ["path"] = "/api/v1/profiles", ["description"] = "Switch or delete profile slots" }
+            new() { ["method"] = "POST", ["path"] = "/api/v1/profiles", ["description"] = "Switch or delete profile slots" },
+            new() { ["method"] = "GET", ["path"] = "/api/v1/snapshots", ["description"] = "List current-run save snapshots created by STS2_MCP" },
+            new() { ["method"] = "POST", ["path"] = "/api/v1/snapshots", ["description"] = "Create or restore current-run save snapshots when enabled by environment" }
         };
     }
 

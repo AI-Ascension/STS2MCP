@@ -10,6 +10,7 @@
 | `get_settings()` | General | Get current settings and preferences |
 | `get_profile()` | Profiles | Get active profile progress plus save/run context |
 | `get_compendium()` | Profiles | Get Compendium-shaped profile progress plus save/run context |
+| `search_wiki(query, item_type?, limit?)` | Profiles | Fuzzy-search discovered card and relic wiki entries |
 | `get_bestiary()` | Profiles | Get deterministic monster and encounter metadata with counts |
 | `get_glossary_cards()` | Active Pool | Get active-run card pool metadata with current-run save context |
 | `get_glossary_relics()` | Active Pool | Get active-run relic pool metadata with current-run save context |
@@ -18,6 +19,9 @@
 | `list_profiles()` | Profiles | List profile slots and active slot |
 | `switch_profile(profile_id)` | Profiles | Switch to a profile slot through the game UI |
 | `delete_profile(profile_id)` | Profiles | Delete an inactive profile slot |
+| `list_snapshots()` | Snapshots | List current-run save snapshots and snapshot feature status |
+| `create_snapshot()` | Snapshots | Create a snapshot from the active profile's current run save |
+| `resume_snapshot(snapshot_id)` | Snapshots | Restore a snapshot to the active profile's current run save slot |
 | `use_potion(slot, target?)` | General | Use a potion (works in and out of combat) |
 | `discard_potion(slot)` | General | Discard a potion to free up the slot |
 | `proceed_to_map()` | General | Proceed from rewards/rest site/shop/treasure to the map |
@@ -56,6 +60,8 @@ Save/path context fields are normalized with forward slashes, including Windows 
 
 Profile switch/delete failures are surfaced as structured endpoint errors with HTTP 400 for invalid input and HTTP 409 for state conflicts such as deleting the active profile or switching during a run.
 
+Snapshot capture is opt-in. Launch the game with `STS2_MCP_SNAPSHOTS=1` to create a snapshot every time the game saves `current_run.save` or `current_run_mp.save`. Set `STS2_MCP_SNAPSHOT_DIR` to override the snapshot directory. `resume_snapshot()` restores a selected snapshot on disk and is rejected while a run is in progress; continue from the in-game menu after restoring.
+
 POST validation failures preserve endpoint `error_code` values such as `invalid_json`, `missing_action`, `invalid_action_type`, `missing_profile_id`, `invalid_profile_id_type`, and `invalid_action_payload`.
 
 Route-level failures preserve endpoint `error_code` values such as `method_not_allowed`, `not_found`, and `internal_error`.
@@ -68,9 +74,29 @@ Menu/action dispatch failures also use structured endpoint errors: missing or un
 
 Glossary tools require an active run. They include the current character context plus shared run pools such as Colorless cards, shared relics, and shared potions. Card glossary items include energy/star costs, upgrade availability, plus upgraded-preview cost and description. Successful responses include `profile_id`, `progress_path`, `resolved_progress_path`, `profile_root`, `save_scope`, `current_run` save context, `kind`, `count`, and `items`; `current_run.run_id` and `current_run.seed` are included when `current_run.save` exposes them. The HTTP endpoints return `run_not_in_progress` with HTTP 409 when called from the main menu, or `run_state_unavailable` with HTTP 503 if the active run state cannot be read, while still including the active profile/save context fields.
 
+`search_wiki(query, item_type="all", limit=10)` is the selective profile wiki lookup. It fuzzy-matches names and IDs such as `ironclad perfect strike` or `silver spoon`, but searches only cards and relics discovered by the active profile. Card matches include `base` and `upgraded` blocks so agents can compare pre-upgrade and post-upgrade text without asking for the full card library.
+
+## Bridge Configuration
+
+The Python MCP bridge reads connection settings from the process environment and then from `mcp/.env` for unset keys. Environment variables always win over `.env` values.
+
+Supported settings:
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `STS2_HOST` | `localhost` | Hostname or IP address for the STS2_MCP HTTP listener |
+| `STS2_PORT` | `15526` | Port for the STS2_MCP HTTP listener |
+| `STS2_MCP_AUTH_TOKEN` | unset | Optional bearer token sent by the MCP bridge as `Authorization: Bearer <token>` |
+
+`STS2_MCP_AUTH_TOKEN` does not make the game mod enforce authentication. It only controls the HTTP headers sent by the MCP bridge, which is useful when the bridge talks through an authenticated proxy/tunnel or a future listener that validates bearer tokens.
+
+`mcp/.env` supports simple `KEY=value` entries, optional `export`, quoted values, and inline comments after whitespace. Tokens containing `#` are preserved when the hash is part of the value, for example `STS2_MCP_AUTH_TOKEN=abc#123`. Local `.env` files are ignored by git.
+
 ## Multiplayer
 
 All multiplayer tools are prefixed with `mp_`. They route through `/api/v1/multiplayer` and are only available during multiplayer (co-op) runs. The endpoints automatically guard against cross-mode calls.
+
+If the game mod is launched on a non-default port with `STS2_PORT`, start the MCP bridge with the same port, for example `python server.py --port 15527`. The game listener reads its port at game startup; the MCP bridge reads its own connection settings when the bridge process starts.
 
 | Tool | Scope | Description |
 |---|---|---|

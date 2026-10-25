@@ -11,12 +11,11 @@ HTTP API served by the STS2_MCP mod on `localhost:15526`. No authentication. Loc
 - `GET  /api/v1/profile` — read current profile progress
 - `GET  /api/v1/compendium` — read Compendium-shaped profile progress
 - `GET  /api/v1/bestiary` — read monster and encounter metadata
-- `GET  /api/v1/glossary/cards` — read active-run card pool metadata
-- `GET  /api/v1/glossary/relics` — read active-run relic pool metadata
-- `GET  /api/v1/glossary/potions` — read active-run potion pool metadata
-- `GET  /api/v1/glossary/keywords` — read active-run keyword metadata
+- `GET  /api/v1/wiki` — fuzzy-search discovered card/relic wiki entries
 - `GET  /api/v1/profiles` — list profile slots
 - `POST /api/v1/profiles` — switch or delete profile slots
+- `GET  /api/v1/snapshots` — list current-run save snapshots
+- `POST /api/v1/snapshots` — create or resume current-run save snapshots
 
 HTTP error responses include `status: "error"` and `error`; route, validation, read-endpoint, and action failures include `error_code`.
 Route-level failures include `error_code: "method_not_allowed"` for unsupported HTTP methods, `error_code: "not_found"` for unknown paths, and `error_code: "internal_error"` for unexpected top-level handler failures.
@@ -605,7 +604,15 @@ Pick one card to add to your deck. Appears after claiming a card reward, or dire
         "children": [ [2, 1], [3, 1], [4, 1] ]  // [col, row] pairs
       }
     ],
-    "boss": { "col": 3, "row": 15 }
+    "boss": {
+      "col": 3,
+      "row": 15,
+      "id": "ENCOUNTER.VANTOM_BOSS",
+      "name": "Vantom"
+    },
+    "bosses": [
+      { "col": 3, "row": 15, "id": "ENCOUNTER.VANTOM_BOSS", "name": "Vantom" }
+    ]
   },
   "run": { ... },
   "player": { ... }
@@ -1154,6 +1161,133 @@ Example success shape:
 }
 ```
 
+### `GET /api/v1/compendium`
+
+Returns the active profile's progress grouped by the in-game Compendium cards:
+
+- `current_run`: present while a run is active. Includes a derived `run_id` in `{save_scope}:profile{profile_id}:{start_time}` format, plus `start_time`, `seed`, `save_time`, `run_time`, and run metadata read from `current_run.save`.
+- `card_library`: discovered card IDs and card pick/skip/win/loss stats. This endpoint intentionally reports profile-level progress; card rules text remains available through game state when cards are visible in a run.
+- `relic_collection`: discovered relic IDs. The profile save exposes discovery, but not a typed per-relic description or obtained-count catalog.
+- `potion_lab`: discovered potion IDs. The profile save exposes discovery, but not a typed per-potion rules text or lab metadata catalog.
+- `bestiary`: profile encounter/enemy fight stats. The in-game Bestiary card is currently marked future/locked, so this section is stats-only and does not expose a full enemy metadata catalog.
+- `character_stats`: per-character and global profile totals.
+- `run_history`: summaries of the active profile's saved `saves/history/*.run` files. If more than 20 files exist, the response includes the 20 most recent entries and the local `history_path`.
+
+The response is built from `SaveManager.Progress`, the active profile's `progress.save` path, and local run-history files under the same active Steam account. It does not scan every Steam account under the save root. Run-history parsing is bounded to the 20 most recent `.run` files in the response so profile pages with many saved runs do not return unbounded payloads.
+
+`current_run.run_id` is derived from save scope, profile id, and run `start_time`. Use it to identify one concrete run attempt. Use `seed` separately when grouping runs by generated content, because multiple attempts can share the same seed.
+
+```jsonc
+{
+  "profile_id": 1,
+  "current_run": {
+    "is_in_progress": true,
+    "profile_id": 1,
+    "save_scope": "modded",
+    "run_id": "modded:profile1:1778295706",
+    "start_time": 1778295706,
+    "seed": "2450ZAR9EF",
+    "run_time": 137
+  },
+  "sections": {
+    "card_library": { "status": "exposed", "discovered_ids": ["BASH"], "stats": [] },
+    "relic_collection": { "status": "partially_exposed", "discovered_ids": ["BURNING_BLOOD"] },
+    "potion_lab": { "status": "partially_exposed", "discovered_ids": [] },
+    "bestiary": { "status": "locked_in_ui", "encounter_stats": [], "enemy_stats": [] },
+    "character_stats": { "status": "exposed", "characters": [], "global": {} },
+    "run_history": {
+      "status": "exposed",
+      "entry_count": 10,
+      "entries": [
+        {
+          "id": "1774869148",
+          "run_id": "modded:profile1:1774869148",
+          "players": [{ "id": 1, "character": "CHARACTER.IRONCLAD" }],
+          "ascension": 0,
+          "win": false,
+          "run_time": 6541
+        }
+      ]
+    }
+  }
+}
+```
+
+### `GET /api/v1/bestiary`
+
+Returns monster and encounter metadata with `status`, `kind`, `monster_count`,
+`encounter_count`, `monsters`, and `encounters`. Profile-specific fight stats are
+also available from `/api/v1/compendium`.
+
+### `GET /api/v1/wiki`
+
+Searches wiki-style card and relic entries available to the active profile. The endpoint requires a query, filters to the profile's discovered card and relic IDs, fuzzy-ranks the matches, and returns a bounded result set. It does not expose the full game catalog.
+
+Query parameters:
+
+| Parameter | Values | Default | Description |
+|---|---|---|---|
+| `query` or `q` | text | required | Fuzzy search text, such as `ironclad perfect strike` or `silver spoon`. |
+| `item_type` or `type` | `all`, `card`, `relic` | `all` | Restricts the search to one wiki kind. |
+| `limit` | integer | `10` | Maximum returned entries. The mod clamps values below 1 and above its internal maximum. |
+
+Card results include both `base` and `upgraded` variants when the card can be upgraded. The upgraded variant is built from a cloned preview, so the catalog model is not mutated.
+
+```http
+GET /api/v1/wiki?query=ironclad%20perfect%20strike&item_type=card&limit=3
+```
+
+```jsonc
+{
+  "status": "ok",
+  "profile_id": 1,
+  "query": "ironclad perfect strike",
+  "item_type": "card",
+  "limit": 3,
+  "scope": "active_profile_discovered_cards_and_relics",
+  "selection_policy": "Searches only cards and relics discovered by the active profile, then returns the best fuzzy matches instead of exposing the full catalog.",
+  "counts": {
+    "discovered_cards": 42,
+    "discovered_relics": 18,
+    "searched": 42,
+    "returned": 1
+  },
+  "results": [
+    {
+      "item_type": "card",
+      "id": "PERFECTED_STRIKE",
+      "name": "Perfected Strike",
+      "score": 775.123,
+      "rarity": "Common",
+      "type": "Attack",
+      "is_upgradable": true,
+      "base": {
+        "variant": "base",
+        "cost": "2",
+        "description": "Deal ... damage.",
+        "is_upgraded": false,
+        "keywords": []
+      },
+      "upgraded": {
+        "variant": "upgraded",
+        "cost": "2",
+        "description": "Deal ... damage.",
+        "is_upgraded": true,
+        "keywords": []
+      }
+    }
+  ]
+}
+```
+
+Relic searches use the same profile filter and ranking:
+
+```http
+GET /api/v1/wiki?query=silver%20spoon&item_type=relic
+```
+
+Relic results include `id`, `name`, `rarity`, `description`, and `keywords`.
+
 ### `GET /api/v1/profiles`
 
 Lists the three profile slots and identifies the active slot.
@@ -1221,6 +1355,61 @@ Delete an inactive profile slot:
 Switching is rejected during a run. Deleting the active profile is rejected; switch away first if you need to remove a slot.
 Profile action validation returns structured HTTP errors: invalid profile IDs and unknown actions return HTTP 400, deleting the active profile returns HTTP 409 with `error_code: "active_profile_delete"`, and switching profiles during a run returns HTTP 409 with `error_code: "run_in_progress"`.
 
+### `GET /api/v1/snapshots`
+
+Lists current-run save snapshots created by STS2_MCP and reports whether automatic snapshot capture is enabled.
+
+Snapshot capture is opt-in. Launch the game with `STS2_MCP_SNAPSHOTS=1` to copy `current_run.save` or `current_run_mp.save` every time the game saves. Set `STS2_MCP_SNAPSHOT_DIR` to override the snapshot directory.
+
+```json
+{
+  "status": "ok",
+  "kind": "snapshots",
+  "enabled": true,
+  "enable_env_var": "STS2_MCP_SNAPSHOTS",
+  "snapshot_root_env_var": "STS2_MCP_SNAPSHOT_DIR",
+  "snapshot_root": "C:/.../SlayTheSpire2/steam/<account>/sts2_mcp_snapshots",
+  "count": 1,
+  "snapshots": [
+    {
+      "id": "modded_profile1_sp_20260509T173000000Z",
+      "profile_id": 1,
+      "profile_root": "modded/profile1",
+      "save_scope": "modded",
+      "game_mode": "singleplayer",
+      "save_file_name": "current_run.save",
+      "run_id": "modded:profile1:1777777777",
+      "start_time": 1777777777,
+      "save_time": 1777777999,
+      "snapshot_save_path": "C:/.../sts2_mcp_snapshots/modded_profile1_sp_20260509T173000000Z/current_run.save"
+    }
+  ]
+}
+```
+
+### `POST /api/v1/snapshots`
+
+Create a snapshot from the active profile's latest current-run save:
+
+```json
+{ "action": "create" }
+```
+
+Restore a snapshot to the active profile's current-run save slot:
+
+```json
+{ "action": "resume", "snapshot_id": "modded_profile1_sp_20260509T173000000Z" }
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `action` | string | Yes | `create` or `resume` |
+| `snapshot_id` | string | For `resume` | Snapshot ID from `GET /api/v1/snapshots` or the create response |
+
+Snapshot actions require `STS2_MCP_SNAPSHOTS=1`. Resuming is rejected while a run is in progress; after restore, use the in-game Continue flow. If an existing current-run save is overwritten, the endpoint first writes a `.pre_snapshot_resume_*.backup` copy.
+
+Manual snapshot creation is rejected on map and shop screens with `error_code: "snapshot_state_not_supported"`. STS2 saves resume the latest visited room rather than the idle map screen, and shop saves do not persist the current merchant inventory.
+
 ---
 
 ## POST — Perform Actions
@@ -1265,7 +1454,7 @@ Select an option from the main menu, a menu submenu, profile select, character s
 | `seed` | string | No | Only supported in menu contexts that expose a real seeded flow. Standard singleplayer character select currently returns an error without starting a run when `seed` is supplied. |
 
 `game_over` advertises only `main_menu`. `continue` is not actionable on that screen and returns an error.
-If `timeline` is blocked by pending obtained epochs, `menu_select` returns HTTP 409 with `error_code: "timeline_manual_action_required"`, `manual_action_required: true`, and `pending_epoch_ids` instead of opening Timeline.
+If `timeline` is blocked by pending obtained epochs, `menu_select` returns an error with `manual_action_required: true` and `pending_epoch_ids` instead of opening Timeline.
 When the game is already on `menu_screen: "timeline"`, `menu_select` with `option: "advance"` progresses safe Timeline UI steps:
 tutorial/confirm/proceed buttons, queued unlock screens, epoch inspect close buttons, and visible obtained epoch slots.
 If the Timeline is still animating, or the obtained epoch slot has not spawned yet, the response includes `retry: true` with `pending_epoch_ids`.

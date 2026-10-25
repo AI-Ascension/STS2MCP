@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -17,10 +18,61 @@ mcp = FastMCP("sts2")
 
 _base_url: str = "http://localhost:15526"
 _trust_env: bool = True
+_auth_token: str | None = None
 _http: httpx.AsyncClient | None = None
+
+
+def _parse_dotenv_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if value.startswith(("'", '"')):
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end != -1:
+            return value[1:end]
+    for marker in (" #", "\t#"):
+        if marker in value:
+            value = value.split(marker, 1)[0].rstrip()
+            break
+    return value
+
+
+def _load_dotenv() -> None:
+    for env_path in (Path(__file__).resolve().parent / ".env", Path.cwd() / ".env"):
+        try:
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, raw_value = stripped.split("=", 1)
+            key = key.strip()
+            if key.startswith("export "):
+                key = key.removeprefix("export ").strip()
+            if key and key not in os.environ:
+                os.environ[key] = _parse_dotenv_value(raw_value)
+
+
+def _read_auth_token() -> str | None:
+    token = os.environ.get("STS2_MCP_AUTH_TOKEN", "").strip()
+    return token or None
+
+
+def _auth_headers() -> dict[str, str]:
+    if _auth_token is None:
+        return {}
+    return {"Authorization": f"Bearer {_auth_token}"}
+
+
+_load_dotenv()
 DEFAULT_HOST = os.environ.get("STS2_HOST", "localhost")
 DEFAULT_PORT = int(os.environ.get("STS2_PORT", "15526"))
 _base_url = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
+_auth_token = _read_auth_token()
 
 
 def _sp_url() -> str:
@@ -43,6 +95,10 @@ def _compendium_url() -> str:
     return f"{_base_url}/api/v1/compendium"
 
 
+def _wiki_url() -> str:
+    return f"{_base_url}/api/v1/wiki"
+
+
 def _settings_url() -> str:
     return f"{_base_url}/api/v1/settings"
 
@@ -59,10 +115,18 @@ def _profiles_url() -> str:
     return f"{_base_url}/api/v1/profiles"
 
 
+def _snapshots_url() -> str:
+    return f"{_base_url}/api/v1/snapshots"
+
+
 def _get_client() -> httpx.AsyncClient:
     global _http
     if _http is None:
-        _http = httpx.AsyncClient(timeout=httpx.Timeout(10), trust_env=_trust_env)
+        _http = httpx.AsyncClient(
+            timeout=httpx.Timeout(10),
+            trust_env=_trust_env,
+            headers=_auth_headers(),
+        )
     return _http
 
 
@@ -108,6 +172,15 @@ async def _compendium_get() -> str:
     return r.text
 
 
+async def _wiki_get(query: str, item_type: str = "all", limit: int = 10) -> str:
+    r = await _get_client().get(
+        _wiki_url(),
+        params={"query": query, "item_type": item_type, "limit": limit},
+    )
+    r.raise_for_status()
+    return r.text
+
+
 async def _settings_get() -> str:
     r = await _get_client().get(_settings_url())
     r.raise_for_status()
@@ -138,7 +211,31 @@ async def _profiles_post(body: dict) -> str:
     return r.text
 
 
+async def _snapshots_get() -> str:
+    r = await _get_client().get(_snapshots_url())
+    r.raise_for_status()
+    return r.text
+
+
+async def _snapshots_post(body: dict) -> str:
+    r = await _get_client().post(_snapshots_url(), json=body)
+    r.raise_for_status()
+    return r.text
+
+
 async def _wait_for_profile(profile_id: int, fallback: str) -> str:
+    initial = json.loads(fallback)
+    if not isinstance(initial, dict):
+        return fallback
+    message = initial.get("message", "")
+    requires_restart = initial.get("requires_restart") is True or (
+        isinstance(message, str) and "requires restart" in message.casefold()
+    )
+    if requires_restart:
+        # A changed profile ID is not proof that the game reloaded profile data.
+        # Preserve the native fallback warning instead of polling it into success.
+        return json.dumps({**initial, "requires_restart": True}, indent=2)
+
     last_profiles: dict | None = None
     for _ in range(30):
         await asyncio.sleep(0.1)
@@ -148,8 +245,9 @@ async def _wait_for_profile(profile_id: int, fallback: str) -> str:
         if profiles.get("current_profile_id") == profile_id:
             return json.dumps(
                 {
+                    **initial,
                     "status": "ok",
-                    "message": f"Switched to profile {profile_id}",
+                    "message": initial.get("message", f"Switched to profile {profile_id}"),
                     "current_profile_id": profile_id,
                     "profiles": profiles.get("profiles", []),
                 },
@@ -267,11 +365,6 @@ async def menu_select(option: str, seed: str | None = None) -> str:
     multiplayer load lobby (resume saved co-op run), character select for SP
     and MP (with `unready` once readied in MP), profile switching, timeline
     controls, tutorial prompts, blocking popups, and game-over main-menu return.
-    Timeline entry from the main menu may still return `manual_action_required`
-    when obtained epochs are pending, but `advance` on an already-open Timeline
-    can reveal visible obtained epoch slots and may return `retry` while the
-    screen is animating. Pending epochs without visible slots still return
-    `manual_action_required`.
 
     Multiplayer flow tips:
       - On menu_screen "multiplayer_join", use refresh / back / join_<index> /
@@ -325,6 +418,27 @@ async def get_compendium() -> str:
     """
     try:
         return await _compendium_get()
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool()
+async def search_wiki(query: str, item_type: str = "all", limit: int = 10) -> str:
+    """Search discovered card and relic wiki entries for the active profile.
+
+    Uses fuzzy matching over profile-unlocked content only, so agents can ask
+    for a card or relic by approximate name without receiving the entire game
+    catalog. Card results include both base and upgraded variants when the card
+    can be upgraded.
+
+    Args:
+        query: Search text such as "ironclad perfect strike" or "silver spoon".
+        item_type: "all", "card", or "relic".
+        limit: Maximum results to return. Defaults to 10; the mod clamps it to
+            a bounded maximum.
+    """
+    try:
+        return await _wiki_get(query, item_type, limit)
     except Exception as e:
         return _handle_error(e)
 
@@ -441,7 +555,9 @@ async def switch_profile(profile_id: int) -> str:
 
     Use an empty slot to create or enter a fresh profile for testing. This cannot
     be used while a run is in progress. HTTP validation errors include
-    structured error_code values from the profile endpoint.
+    structured error_code values from the profile endpoint. A native fallback
+    can require restarting the game; requires_restart and its warning are
+    preserved even when the active profile ID has already changed.
 
     Args:
         profile_id: Profile slot to switch to. Must be 1, 2, or 3.
@@ -470,6 +586,52 @@ async def switch_profile(profile_id: int) -> str:
         except json.JSONDecodeError:
             pass
         return result
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool()
+async def list_snapshots() -> str:
+    """List STS2_MCP current-run save snapshots.
+
+    Snapshot capture is enabled in the loaded mod by launching the game with
+    STS2_MCP_SNAPSHOTS=1. The response includes enabled state, snapshot root,
+    count, and snapshot metadata such as profile_id, run_id, game_mode, and
+    snapshot_id.
+    """
+    try:
+        return await _snapshots_get()
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool()
+async def create_snapshot() -> str:
+    """Create a snapshot from the active profile's current run save file.
+
+    Requires STS2_MCP_SNAPSHOTS=1 in the game process. This copies the latest
+    current_run.save/current_run_mp.save on disk without playing game actions.
+    The mod rejects manual snapshots from map and shop screens because STS2
+    saves cannot restore those exact UI states.
+    """
+    try:
+        return await _snapshots_post({"action": "create"})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool()
+async def resume_snapshot(snapshot_id: str) -> str:
+    """Restore a snapshot to the active profile's current run save slot.
+
+    Requires STS2_MCP_SNAPSHOTS=1 in the game process. The mod rejects this while
+    a run is in progress; after restore, use the in-game Continue flow to load it.
+
+    Args:
+        snapshot_id: ID returned by list_snapshots() or create_snapshot().
+    """
+    try:
+        return await _snapshots_post({"action": "resume", "snapshot_id": snapshot_id})
     except Exception as e:
         return _handle_error(e)
 
@@ -1340,9 +1502,10 @@ def main():
     parser.add_argument("--no-trust-env", action="store_true", help="Ignore HTTP_PROXY/HTTPS_PROXY environment variables")
     args = parser.parse_args()
 
-    global _base_url, _trust_env
+    global _auth_token, _base_url, _trust_env
     _base_url = f"http://{args.host}:{args.port}"
     _trust_env = not args.no_trust_env
+    _auth_token = _read_auth_token()
 
     # Eagerly initialize the shared httpx client so the first request is fast
     _get_client()

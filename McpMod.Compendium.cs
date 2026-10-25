@@ -47,7 +47,6 @@ public static partial class McpMod
 
         var profileId = saveManager.CurrentProfileId;
         var progressPath = GetProfileProgressPath(profileId);
-        var resolvedProgressPath = ResolveProfileProgressPath(profileId);
         var profileRoot = GetProfileRootFromProgressPath(progressPath, profileId);
 
         var cardStats = progress.CardStats
@@ -80,7 +79,7 @@ public static partial class McpMod
         {
             ProfileId = profileId,
             ProgressPath = progressPath,
-            ResolvedProgressPath = resolvedProgressPath,
+            ResolvedProgressPath = ResolveProfileProgressPath(profileId),
             ProfileRoot = profileRoot,
             SaveScope = GetSaveScope(profileRoot),
             IsRunInProgress = RunManager.Instance?.IsInProgress == true,
@@ -125,7 +124,7 @@ public static partial class McpMod
             ["profile_root"] = NormalizePathForJson(snapshot.ProfileRoot),
             ["save_scope"] = snapshot.SaveScope,
             ["current_run"] = BuildCurrentRunContext(snapshot),
-            ["source"] = "SaveManager.Progress plus model metadata endpoints",
+            ["source"] = "SaveManager.Progress and active-profile save files",
             ["sections"] = new Dictionary<string, object?>
             {
                 ["card_library"] = new Dictionary<string, object?>
@@ -133,8 +132,7 @@ public static partial class McpMod
                     ["ui_label"] = "Card Library",
                     ["status"] = "exposed",
                     ["source"] = "/api/v1/profile card_stats and discovered_cards",
-                    ["detail_endpoint"] = "/api/v1/glossary/cards",
-                    ["detail_endpoint_requires_run"] = true,
+                    ["metadata_limitation"] = "This endpoint exposes profile-level discovery and aggregate card stats. Card rules text remains available through game state when cards are visible in a run.",
                     ["discovered_ids"] = snapshot.DiscoveredCards,
                     ["stats"] = snapshot.CardStats
                 },
@@ -143,30 +141,25 @@ public static partial class McpMod
                     ["ui_label"] = "Relic Collection",
                     ["status"] = "partially_exposed",
                     ["source"] = "/api/v1/profile discovered_relics",
-                    ["detail_endpoint"] = "/api/v1/glossary/relics",
-                    ["detail_endpoint_requires_run"] = true,
                     ["discovered_ids"] = snapshot.DiscoveredRelics,
-                    ["limitation"] = "Profile exposes discovered relic IDs; per-relic obtained counts are not exposed by a typed API here."
+                    ["limitation"] = "Profile exposes discovered relic IDs; per-relic descriptions and obtained counts are not exposed by a typed profile API here."
                 },
                 ["potion_lab"] = new Dictionary<string, object?>
                 {
                     ["ui_label"] = "Potion Lab",
                     ["status"] = "partially_exposed",
                     ["source"] = "/api/v1/profile discovered_potions",
-                    ["detail_endpoint"] = "/api/v1/glossary/potions",
-                    ["detail_endpoint_requires_run"] = true,
                     ["discovered_ids"] = snapshot.DiscoveredPotions,
-                    ["limitation"] = "Profile exposes discovered potion IDs; per-potion lab UI metadata is not exposed by a typed API here."
+                    ["limitation"] = "Profile exposes discovered potion IDs; per-potion rules text and lab UI metadata are not exposed by a typed profile API here."
                 },
                 ["bestiary"] = new Dictionary<string, object?>
                 {
                     ["ui_label"] = "Bestiary",
                     ["status"] = "locked_in_ui",
-                    ["source"] = "/api/v1/bestiary model metadata",
-                    ["detail_endpoint"] = "/api/v1/bestiary",
+                    ["source"] = "SaveManager.Progress encounter and enemy fight stats",
                     ["encounter_stats"] = snapshot.EncounterStats,
                     ["enemy_stats"] = snapshot.EnemyStats,
-                    ["limitation"] = "The current game UI labels Bestiary as future/locked; the endpoint exposes reflected model metadata and profile fight stats when available."
+                    ["limitation"] = "The current game UI labels Bestiary as future/locked; this endpoint exposes profile fight stats when available, not a full enemy metadata catalog."
                 },
                 ["character_stats"] = new Dictionary<string, object?>
                 {
@@ -405,7 +398,8 @@ public static partial class McpMod
             profileId,
             GetSaveScope(profileRoot),
             progressPath,
-            profileRoot);
+            profileRoot,
+            TryGetActiveRunSaveFileName());
     }
 
     private static Dictionary<string, object?>? BuildCurrentRunContext(
@@ -413,7 +407,8 @@ public static partial class McpMod
         int profileId,
         string saveScope,
         string? progressPath,
-        string profileRoot)
+        string profileRoot,
+        string runSaveFileName = "current_run.save")
     {
         if (!isRunInProgress)
             return null;
@@ -429,10 +424,10 @@ public static partial class McpMod
             ["id_format"] = "{save_scope}:profile{profile_id}:{start_time}"
         };
 
-        var currentRunPath = ResolveCurrentRunPath(progressPath, profileRoot);
+        var currentRunPath = ResolveCurrentRunPath(progressPath, profileRoot, runSaveFileName);
         if (currentRunPath == null || !File.Exists(currentRunPath))
         {
-            result["limitation"] = "Run is in progress, but current_run.save was not found yet.";
+            result["limitation"] = $"Run is in progress, but {runSaveFileName} was not found yet.";
             return result;
         }
 
@@ -513,6 +508,10 @@ public static partial class McpMod
                 return historyPath;
         }
 
+        // A rooted game-provided path is authoritative, even when its file/directory is absent.
+        if (!string.IsNullOrWhiteSpace(snapshot.ProgressPath) && Path.IsPathRooted(snapshot.ProgressPath))
+            return null;
+
         foreach (var saveRoot in EnumerateSaveRoots())
         {
             var historyPath = Path.Combine(saveRoot, snapshot.ProfileRoot, "saves", "history");
@@ -554,7 +553,6 @@ public static partial class McpMod
     {
         var yielded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var steamRoots = EnumerateSteamDataRoots().ToList();
-
         var activeSteamId = GetActiveSteamId();
         if (!string.IsNullOrWhiteSpace(activeSteamId))
         {
@@ -564,16 +562,31 @@ public static partial class McpMod
                 if (Directory.Exists(accountRoot) && yielded.Add(accountRoot))
                     yield return accountRoot;
             }
+            // An absent active-account directory is not permission to use another account.
+            yield break;
         }
 
+        var accountRoots = new List<string>();
+        var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var steamRoot in steamRoots)
         {
-            foreach (var accountRoot in Directory.GetDirectories(steamRoot).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            string[] directories;
+            try { directories = Directory.GetDirectories(steamRoot); }
+            catch (IOException) { yield break; }
+            catch (UnauthorizedAccessException) { yield break; }
+            foreach (var accountRoot in directories.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
             {
-                if (yielded.Add(accountRoot))
-                    yield return accountRoot;
+                if (!yielded.Add(accountRoot))
+                    continue;
+                accountRoots.Add(accountRoot);
+                identities.Add(Path.GetFileName(accountRoot));
             }
         }
+        // Unknown identity is safe only when all observed roots belong to one account.
+        if (identities.Count != 1)
+            yield break;
+        foreach (var accountRoot in accountRoots)
+            yield return accountRoot;
     }
 
     private static IEnumerable<string> EnumerateSteamDataRoots()
@@ -648,19 +661,23 @@ public static partial class McpMod
     private static string? ResolveCurrentRunPath(CompendiumSnapshot snapshot)
         => ResolveCurrentRunPath(snapshot.ProgressPath, snapshot.ProfileRoot);
 
-    private static string? ResolveCurrentRunPath(string? progressPath, string profileRoot)
+    private static string? ResolveCurrentRunPath(string? progressPath, string profileRoot, string runSaveFileName = "current_run.save")
     {
         var saveDirectory = GetSaveDirectoryFromProgressPath(progressPath);
         if (saveDirectory != null)
         {
-            var currentRunPath = Path.Combine(saveDirectory, "current_run.save");
+            var currentRunPath = Path.Combine(saveDirectory, runSaveFileName);
             if (File.Exists(currentRunPath))
                 return currentRunPath;
         }
 
+        // A rooted game-provided path is authoritative, even when its file/directory is absent.
+        if (!string.IsNullOrWhiteSpace(progressPath) && Path.IsPathRooted(progressPath))
+            return null;
+
         foreach (var saveRoot in EnumerateSaveRoots())
         {
-            var absolutePath = Path.Combine(saveRoot, profileRoot, "saves", "current_run.save");
+            var absolutePath = Path.Combine(saveRoot, profileRoot, "saves", runSaveFileName);
             if (File.Exists(absolutePath))
                 return absolutePath;
         }

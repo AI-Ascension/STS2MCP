@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -81,6 +83,65 @@ def test_non_endpoint_http_error_stays_text(server) -> None:
     error = _http_status_error(502, {"status": "ok", "message": "bad gateway"})
     rendered = server._handle_error(error)
     assert rendered.startswith("Error: HTTP 502")
+
+
+def test_dotenv_loads_without_overriding_environment(server) -> None:
+    keys = [
+        "STS2_MCP_AUTH_TOKEN",
+        "STS2_HASH_TOKEN",
+        "STS2_HOST",
+        "STS2_EXISTING",
+    ]
+    old_env = {key: os.environ.get(key) for key in keys}
+    old_cwd = Path.cwd()
+    try:
+        for key in keys:
+            os.environ.pop(key, None)
+        os.environ["STS2_EXISTING"] = "from-env"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "# ignored",
+                        "STS2_MCP_AUTH_TOKEN=from-dotenv # inline comment",
+                        "STS2_HASH_TOKEN=hash#token",
+                        'export STS2_HOST="127.0.0.1" # quoted inline comment',
+                        "STS2_EXISTING=from-dotenv",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            os.chdir(tmp)
+            server._load_dotenv()
+
+        assert os.environ["STS2_MCP_AUTH_TOKEN"] == "from-dotenv"
+        assert os.environ["STS2_HASH_TOKEN"] == "hash#token"
+        assert os.environ["STS2_HOST"] == "127.0.0.1"
+        assert os.environ["STS2_EXISTING"] == "from-env"
+    finally:
+        os.chdir(old_cwd)
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_auth_token_sets_bearer_header(server) -> None:
+    original_http = server._http
+    original_auth_token = server._auth_token
+    try:
+        server._http = None
+        server._auth_token = "secret-token"
+        client = server._get_client()
+        assert client.headers["authorization"] == "Bearer secret-token"
+    finally:
+        if server._http is not None:
+            asyncio.run(server._http.aclose())
+        server._http = original_http
+        server._auth_token = original_auth_token
 
 
 async def test_read_tool_preserves_structured_endpoint_error(server) -> None:
@@ -262,16 +323,54 @@ async def test_delete_profile_preserves_structured_endpoint_error(server) -> Non
     assert payload["http_status"] == 409
 
 
+async def test_create_snapshot_preserves_structured_endpoint_error(server) -> None:
+    async def fake_snapshots_post(body: dict) -> str:
+        assert body == {"action": "create"}
+        raise _http_status_error(
+            400,
+            {
+                "status": "error",
+                "error": "Snapshots are disabled.",
+                "error_code": "snapshots_disabled",
+            },
+        )
+
+    server._snapshots_post = fake_snapshots_post
+    rendered = await server.create_snapshot()
+    payload = json.loads(rendered)
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "snapshots_disabled"
+    assert payload["http_status"] == 400
+
+
+async def test_resume_snapshot_uses_snapshot_id(server) -> None:
+    async def fake_snapshots_post(body: dict) -> str:
+        assert body == {"action": "resume", "snapshot_id": "snapshot-1"}
+        return '{"status":"ok","kind":"snapshot_resume"}'
+
+    server._snapshots_post = fake_snapshots_post
+    rendered = await server.resume_snapshot("snapshot-1")
+    payload = json.loads(rendered)
+
+    assert payload["status"] == "ok"
+    assert payload["kind"] == "snapshot_resume"
+
+
 def main() -> None:
     server = _load_server_module()
     test_structured_http_error_is_preserved(server)
     test_non_endpoint_http_error_stays_text(server)
+    test_dotenv_loads_without_overriding_environment(server)
+    test_auth_token_sets_bearer_header(server)
     asyncio.run(test_read_tool_preserves_structured_endpoint_error(server))
     asyncio.run(test_menu_select_retries_multiplayer_conflict(server))
     asyncio.run(test_menu_select_does_not_retry_other_409(server))
     asyncio.run(test_switch_profile_reposts_from_profile_screen_and_waits(server))
     asyncio.run(test_wait_for_profile_timeout_keeps_initial_response(server))
     asyncio.run(test_delete_profile_preserves_structured_endpoint_error(server))
+    asyncio.run(test_create_snapshot_preserves_structured_endpoint_error(server))
+    asyncio.run(test_resume_snapshot_uses_snapshot_id(server))
     print("mcp server tests passed")
 
 

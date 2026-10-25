@@ -1,5 +1,9 @@
+using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
+using MegaCrit.Sts2.Core.Nodes.Events.Custom;
+using MegaCrit.Sts2.Core.Models.Events;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
@@ -12,11 +16,8 @@ using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
 using MegaCrit.Sts2.Core.Entities.Merchant;
-using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Nodes.Events;
-using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 using MegaCrit.Sts2.Core.Nodes.Events.Custom.CrystalSphere;
-using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Rooms;
@@ -33,12 +34,13 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.Potions;
 using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Runs;
+
+using Godot;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.GameOverScreen;
 using MegaCrit.Sts2.Core.Nodes.Screens.Timeline;
 using MegaCrit.Sts2.Core.Nodes.Screens.ProfileScreen;
-using Godot;
 
 namespace STS2_MCP;
 
@@ -47,12 +49,12 @@ public static partial class McpMod
     private static Dictionary<string, object?> ExecuteAction(string action, Dictionary<string, JsonElement> data)
     {
         if (!RunManager.Instance.IsInProgress)
-            return Error("No run in progress", "run_not_in_progress");
+            return Error("No run in progress");
 
         var runState = RunManager.Instance.DebugOnlyGetState()!;
         var player = LocalContext.GetMe(runState);
         if (player == null)
-            return Error("Could not find local player", "local_player_unavailable");
+            return Error("Could not find local player");
 
         var tree = (Godot.Engine.GetMainLoop()) as SceneTree;
         if (tree?.Root != null && IsAnyFtueVisible(tree.Root))
@@ -87,7 +89,7 @@ public static partial class McpMod
             "crystal_sphere_set_tool" => ExecuteCrystalSphereSetTool(data),
             "crystal_sphere_click_cell" => ExecuteCrystalSphereClickCell(data),
             "crystal_sphere_proceed" => ExecuteCrystalSphereProceed(),
-            _ => Error($"Unknown action: {action}", "unknown_action")
+            _ => Error($"Unknown action: {action}")
         };
     }
 
@@ -96,11 +98,11 @@ public static partial class McpMod
         if (!CombatManager.Instance.IsInProgress)
             return Error("Not in combat");
         if (!CombatManager.Instance.IsPlayPhase)
-            return Error("Not in play phase - cannot act during enemy turn");
+            return Error("Not in play phase — cannot act during enemy turn");
         if (CombatManager.Instance.PlayerActionsDisabled)
             return Error("Player actions are currently disabled");
         if (!player.Creature.IsAlive)
-            return Error("Player creature is dead - cannot play cards");
+            return Error("Player creature is dead — cannot play cards");
 
         var combatState = player.Creature.CombatState;
         if (combatState == null)
@@ -151,7 +153,7 @@ public static partial class McpMod
         if (!CombatManager.Instance.IsInProgress)
             return Error("Not in combat");
         if (!CombatManager.Instance.IsPlayPhase)
-            return Error("Not in play phase - cannot act during enemy turn");
+            return Error("Not in play phase — cannot act during enemy turn");
         if (CombatManager.Instance.PlayerActionsDisabled)
             return Error("Player actions are currently disabled (turn may already be ending)");
 
@@ -184,7 +186,7 @@ public static partial class McpMod
         if (potion.IsQueued)
             return Error($"Potion '{SafeGetText(() => potion.Title)}' is already queued for use");
         if (potion.Owner.Creature.IsDead)
-            return Error("Cannot use potion - player creature is dead");
+            return Error("Cannot use potion — player creature is dead");
         if (!potion.PassesCustomUsabilityCheck)
             return Error($"Potion '{SafeGetText(() => potion.Title)}' cannot be used right now");
 
@@ -246,31 +248,6 @@ public static partial class McpMod
         };
     }
 
-    private static Dictionary<string, object?> ExecuteDiscardPotion(Player player, Dictionary<string, JsonElement> data)
-    {
-        if (!data.TryGetValue("slot", out var slotElem))
-            return Error("Missing 'slot' (potion slot index)");
-
-        int slot = slotElem.GetInt32();
-        if (slot < 0 || slot >= player.PotionSlots.Count)
-            return Error($"Potion slot {slot} out of range (player has {player.PotionSlots.Count} slots)");
-
-        var potion = player.GetPotionAtSlotIndex(slot);
-        if (potion == null)
-            return Error($"No potion in slot {slot}");
-        if (potion.IsQueued)
-            return Error($"Potion '{SafeGetText(() => potion.Title)}' is already queued and cannot be discarded");
-
-        string potionName = SafeGetText(() => potion.Title) ?? "unknown";
-        _ = PotionCmd.Discard(potion);
-
-        return new Dictionary<string, object?>
-        {
-            ["status"] = "ok",
-            ["message"] = $"Discarded potion '{potionName}' from slot {slot}"
-        };
-    }
-
     private static Dictionary<string, object?> ExecuteChooseEventOption(Dictionary<string, JsonElement> data)
     {
         var uiRoom = NEventRoom.Instance;
@@ -318,7 +295,7 @@ public static partial class McpMod
 
         var hitbox = ancientLayout.GetNodeOrNull<NClickableControl>("%DialogueHitbox");
         if (hitbox == null || !hitbox.Visible || !hitbox.IsEnabled)
-            return Error("Dialogue hitbox not available - dialogue may have ended");
+            return Error("Dialogue hitbox not available — dialogue may have ended");
 
         hitbox.ForceClick();
 
@@ -380,6 +357,11 @@ public static partial class McpMod
                  && eventRoom.CanonicalEvent is FakeMerchant
                  && (eventRoom.LocalMutableEvent ?? eventRoom.CanonicalEvent) is FakeMerchant fakeMerchant)
         {
+            // Stock can remain on the model after the fight starts, but the
+            // merchant is no longer offering it for purchase.
+            if (fakeMerchant.StartedFight)
+                return Error("Fake merchant is no longer available after starting a fight");
+
             // Fake merchant event - auto-open via button if needed
             if (!fakeMerchant.StartedFight)
             {
@@ -433,6 +415,32 @@ public static partial class McpMod
             ["message"] = $"Purchasing item for {entry.Cost} gold"
         };
     }
+
+    private static Dictionary<string, object?> ExecuteDiscardPotion(Player player, Dictionary<string, JsonElement> data)
+    {
+        if (!data.TryGetValue("slot", out var slotElem))
+            return Error("Missing 'slot' (potion slot index)");
+
+        int slot = slotElem.GetInt32();
+        if (slot < 0 || slot >= player.PotionSlots.Count)
+            return Error($"Potion slot {slot} out of range (player has {player.PotionSlots.Count} slots)");
+
+        var potion = player.GetPotionAtSlotIndex(slot);
+        if (potion == null)
+            return Error($"No potion in slot {slot}");
+        if (potion.IsQueued)
+            return Error($"Potion '{SafeGetText(() => potion.Title)}' is already queued and cannot be discarded");
+
+        string potionName = SafeGetText(() => potion.Title) ?? "unknown";
+        _ = PotionCmd.Discard(potion);
+
+        return new Dictionary<string, object?>
+        {
+            ["status"] = "ok",
+            ["message"] = $"Discarded potion '{potionName}' from slot {slot}"
+        };
+    }
+
 
     private static Dictionary<string, object?> ExecuteChooseMapNode(Dictionary<string, JsonElement> data)
     {
@@ -521,6 +529,8 @@ public static partial class McpMod
             return Error($"Card index {cardIndex} out of range (screen has {cardHolders.Count} cards)");
 
         var holder = cardHolders[cardIndex];
+        if (!IsCardHolderSelectable(holder))
+            return Error($"Card index {cardIndex} is not selectable");
         string cardName = SafeGetText(() => holder.CardModel?.Title) ?? "unknown";
         holder.EmitSignal(NCardHolder.SignalName.Pressed, holder);
 
@@ -559,7 +569,7 @@ public static partial class McpMod
         if (overlay is NRewardsScreen rewardsScreen)
         {
             var btn = FindFirst<NProceedButton>(rewardsScreen);
-            if (btn != null && IsControlVisibleOrActionable(btn))
+            if (IsControlVisibleOrActionable(btn))
             {
                 btn.ForceClick();
                 return new Dictionary<string, object?> { ["status"] = "ok", ["message"] = "Proceeding from rewards" };
@@ -573,13 +583,13 @@ public static partial class McpMod
             return new Dictionary<string, object?> { ["status"] = "ok", ["message"] = "Proceeding from rest site" };
         }
 
-        // Try merchant - close inventory first if open, then proceed
+        // Try merchant — close inventory first if open, then proceed
         if (NMerchantRoom.Instance is { } merchRoom)
         {
-            if (merchRoom.Inventory?.IsOpen == true)
+            if (merchRoom.Inventory.IsOpen)
             {
                 var backBtn = FindFirst<NBackButton>(merchRoom);
-                if (backBtn != null && IsControlVisibleOrActionable(backBtn))
+                if (IsControlVisibleOrActionable(backBtn))
                     backBtn.ForceClick();
             }
             if (IsControlVisibleOrActionable(merchRoom.ProceedButton))
@@ -828,15 +838,16 @@ public static partial class McpMod
             return Error("A bundle preview is already open - confirm or cancel it first");
 
         var bundles = FindAll<NCardBundle>(screen)
-            .Where(bundle => bundle.Visible
-                             && bundle.IsVisibleInTree()
-                             && bundle.Hitbox.IsEnabled
-                             && IsNodeVisible(bundle.Hitbox))
+            .Where(bundle => bundle.Visible && bundle.IsVisibleInTree())
             .ToList();
         if (index < 0 || index >= bundles.Count)
             return Error($"Bundle index {index} out of range ({bundles.Count} bundles available)");
 
-        bundles[index].Hitbox.ForceClick();
+        var bundle = bundles[index];
+        if (!bundle.Hitbox.IsEnabled || !IsNodeVisible(bundle.Hitbox))
+            return Error($"Bundle index {index} is not selectable");
+
+        bundle.Hitbox.ForceClick();
         return new Dictionary<string, object?>
         {
             ["status"] = "ok",
@@ -988,7 +999,7 @@ public static partial class McpMod
             return Error("Treasure room is not open");
 
         var relicCollection = treasureUI.GetNodeOrNull<NTreasureRoomRelicCollection>("%RelicCollection");
-        if (relicCollection?.Visible != true)
+        if (relicCollection?.Visible != true || !relicCollection.IsVisibleInTree())
             return Error("Relic collection is not visible - chest may not be opened yet");
 
         if (!data.TryGetValue("index", out var indexElem))
@@ -997,7 +1008,7 @@ public static partial class McpMod
         int index = indexElem.GetInt32();
 
         var holders = FindAll<NTreasureRoomRelicHolder>(relicCollection)
-            .Where(h => h.IsEnabled && h.Visible && h.IsVisibleInTree())
+            .Where(h => h.Relic?.Model != null && h.IsEnabled && h.Visible && h.IsVisibleInTree())
             .ToList();
 
         if (index < 0 || index >= holders.Count)
@@ -1080,15 +1091,67 @@ public static partial class McpMod
             return Error("Crystal Sphere screen is not open");
 
         var proceedButton = screen.GetNodeOrNull<NProceedButton>("%ProceedButton");
-        if (proceedButton is not { IsEnabled: true, Visible: true } || !proceedButton.IsVisibleInTree())
+        bool noDivinationsLeft = CrystalSphereHasNoDivinationsLeft(screen);
+        bool canUseProceed = proceedButton != null
+            && proceedButton.Visible
+            && proceedButton.IsVisibleInTree()
+            && (proceedButton.IsEnabled || noDivinationsLeft);
+
+        if (!canUseProceed)
             return Error("Crystal Sphere proceed button is not enabled");
 
-        proceedButton.ForceClick();
+        var proceed = proceedButton!;
+        string proceedPath = InvokeCrystalSphereProceed(screen, proceed);
         return new Dictionary<string, object?>
         {
             ["status"] = "ok",
-            ["message"] = "Proceeding from Crystal Sphere"
+            ["message"] = proceed.IsEnabled
+                ? $"Proceeding from Crystal Sphere via {proceedPath}"
+                : $"Proceeding from Crystal Sphere after zero-divination fallback via {proceedPath}"
         };
+    }
+
+    private static string InvokeCrystalSphereProceed(NCrystalSphereScreen screen, NProceedButton proceedButton)
+    {
+        var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        foreach (string methodName in new[] { "OnProceedButtonPressed", "OnProceedButtonReleased" })
+        {
+            var method = screen.GetType().GetMethods(flags)
+                .FirstOrDefault(m => m.Name == methodName && m.GetParameters().Length == 1);
+            if (method == null)
+                continue;
+
+            method.Invoke(screen, new object?[] { proceedButton });
+            RemoveCrystalSphereOverlay(screen);
+            return $"{methodName}+remove_overlay";
+        }
+
+        proceedButton.EmitSignal(new StringName("pressed"), proceedButton);
+        proceedButton.EmitSignal(NClickableControl.SignalName.Released, proceedButton);
+        RemoveCrystalSphereOverlay(screen);
+        return "pressed+released signals+remove_overlay";
+    }
+
+    private static void RemoveCrystalSphereOverlay(NCrystalSphereScreen screen)
+    {
+        var overlayStack = NOverlayStack.Instance;
+        if (overlayStack?.Peek() == screen)
+            overlayStack.Remove(screen);
+    }
+
+    private static bool CrystalSphereHasNoDivinationsLeft(NCrystalSphereScreen screen)
+    {
+        var divinationsLeft = screen.GetNodeOrNull<Godot.Control>("%DivinationsLeft");
+        if (divinationsLeft == null)
+            return false;
+
+        var textVariant = divinationsLeft.Get("text");
+        if (textVariant.VariantType == Godot.Variant.Type.Nil)
+            return false;
+
+        string text = StripRichTextTags(textVariant.AsString());
+        return text.Contains("0 Divinations remain", System.StringComparison.OrdinalIgnoreCase)
+            || text.Contains("0 Divination remain", System.StringComparison.OrdinalIgnoreCase);
     }
 
     private static Creature? ResolveTarget(CombatState combatState, string entityId)
@@ -1735,6 +1798,10 @@ public static partial class McpMod
         if (string.Equals(option, "confirm", System.StringComparison.OrdinalIgnoreCase) ||
             string.Equals(option, "embark", System.StringComparison.OrdinalIgnoreCase))
         {
+            var embarkBtn = GetInstanceFieldValue(charSelect, "_embarkButton");
+            if (embarkBtn is not NClickableControl embarkClickable || !IsControlVisibleOrActionable(embarkClickable))
+                return Error("Embark button is not available or not actionable");
+
             if (!string.IsNullOrWhiteSpace(seed))
             {
                 seed = seed.Trim();
@@ -1753,8 +1820,7 @@ public static partial class McpMod
                 }
             }
 
-            var embarkBtn = GetInstanceFieldValue(charSelect, "_embarkButton");
-            if (embarkBtn is NClickableControl embarkClickable && embarkClickable.IsEnabled)
+            if (IsControlVisibleOrActionable(embarkClickable))
             {
                 var msg = string.IsNullOrEmpty(seed) ? "Embarking on run" : $"Embarking on run (seed: {seed})";
                 embarkClickable.ForceClick();

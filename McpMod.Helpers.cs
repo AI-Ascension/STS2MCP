@@ -143,6 +143,7 @@ public static partial class McpMod
                 ? (errorCode as string) switch
                 {
                     "save_manager_unavailable" or "settings_data_unavailable" or "profile_data_unavailable" => 503,
+                    "missing_query" or "invalid_item_type" => 400,
                     _ => 500
                 }
                 : 500;

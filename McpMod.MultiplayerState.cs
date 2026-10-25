@@ -1,11 +1,11 @@
+using MegaCrit.Sts2.Core.Nodes.Screens.GameOverScreen;
+using MegaCrit.Sts2.Core.Models.Events;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Godot;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Players;
-using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Events;
@@ -14,7 +14,6 @@ using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
-using MegaCrit.Sts2.Core.Nodes.Screens.GameOverScreen;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
@@ -32,18 +31,6 @@ public static partial class McpMod
             ["status"] = "ok",
             ["kind"] = "multiplayer_state"
         };
-        var tree = Engine.GetMainLoop() as SceneTree;
-
-        // Surface blocking FTUE/tutorial/popup prompts before normal run state, so MP
-        // automation gets the same dismissal contract as singleplayer (see #71). Every
-        // FTUE in `Decompiled/src/Core/Nodes/Ftue/` gates only on per-profile flags, not
-        // on run mode, so they are equally reachable in multiplayer runs.
-        if (tree?.Root != null)
-        {
-            var ftueState = BuildVisibleFtueState(tree.Root);
-            if (ftueState != null)
-                return WithStateEnvelope(ftueState, "multiplayer_state");
-        }
 
         if (!RunManager.Instance.IsInProgress)
         {
@@ -66,6 +53,16 @@ public static partial class McpMod
             return result;
         }
 
+        // Blocking tutorial/pop-up actions must be discoverable through the MP
+        // endpoint; the SP endpoint is intentionally unavailable during MP runs.
+        var tree = Godot.Engine.GetMainLoop() as Godot.SceneTree;
+        if (tree?.Root != null)
+        {
+            var ftueState = BuildVisibleFtueState(tree.Root);
+            if (ftueState != null)
+                return WithStateEnvelope(ftueState, "multiplayer_state");
+        }
+
         // Multiplayer metadata
         result["game_mode"] = "multiplayer";
         result["net_type"] = RunManager.Instance.NetService.Type.ToString();
@@ -86,7 +83,6 @@ public static partial class McpMod
         // Same overlay-first detection logic as singleplayer
         var topOverlay = NOverlayStack.Instance?.Peek();
         var currentRoom = runState.CurrentRoom;
-        bool mapIsOpen = IsMapScreenOpenOrVisible();
 
         if (topOverlay is NCardGridSelectionScreen cardSelectScreen)
         {
@@ -113,15 +109,18 @@ public static partial class McpMod
             result["state_type"] = "crystal_sphere";
             result["crystal_sphere"] = BuildCrystalSphereState(crystalSphereScreen, runState);
         }
-        else if (!mapIsOpen && topOverlay is NCardRewardSelectionScreen cardRewardScreen)
+        // Reward overlays also appear in events, treasure rooms and rest sites.
+        // Keep the map's post-reward precedence, but never dispatch an active
+        // reward overlay to the underlying room's actions.
+        else if (!IsMapScreenOpenOrVisible() && topOverlay is NCardRewardSelectionScreen overlayCardReward)
         {
             result["state_type"] = "card_reward";
-            result["card_reward"] = BuildCardRewardState(cardRewardScreen);
+            result["card_reward"] = BuildCardRewardState(overlayCardReward);
         }
-        else if (!mapIsOpen && topOverlay is NRewardsScreen rewardsScreen)
+        else if (!IsMapScreenOpenOrVisible() && topOverlay is NRewardsScreen overlayRewards)
         {
             result["state_type"] = "rewards";
-            result["rewards"] = BuildRewardsState(rewardsScreen, runState);
+            result["rewards"] = BuildRewardsState(overlayRewards, runState);
         }
         else if (topOverlay is NGameOverScreen)
         {
@@ -143,6 +142,11 @@ public static partial class McpMod
                 ["message"] = $"An overlay ({topOverlay.GetType().Name}) is active. It may require manual interaction in-game."
             };
         }
+        else if (IsMapScreenOpenOrVisible())
+        {
+            result["state_type"] = "map";
+            result["map"] = BuildMultiplayerMapState(runState);
+        }
         else if (currentRoom is CombatRoom combatRoom)
         {
             if (CombatManager.Instance.IsInProgress)
@@ -162,22 +166,35 @@ public static partial class McpMod
             }
             else
             {
-                // After combat ends - reward/card overlays are caught by top-level checks above.
-                if (IsMapScreenOpenOrVisible())
+                if (NMapScreen.Instance is { IsOpen: true })
                 {
                     result["state_type"] = "map";
                     result["map"] = BuildMultiplayerMapState(runState);
                 }
                 else
                 {
-                    result["state_type"] = combatRoom.RoomType.ToString().ToLower();
-                    result["message"] = "Combat ended. Waiting for rewards...";
+                    var overlay = NOverlayStack.Instance?.Peek();
+                    if (overlay is NCardRewardSelectionScreen cardScreen)
+                    {
+                        result["state_type"] = "card_reward";
+                        result["card_reward"] = BuildCardRewardState(cardScreen);
+                    }
+                    else if (overlay is NRewardsScreen rewardsScreen)
+                    {
+                        result["state_type"] = "rewards";
+                        result["rewards"] = BuildRewardsState(rewardsScreen, runState);
+                    }
+                    else
+                    {
+                        result["state_type"] = combatRoom.RoomType.ToString().ToLower();
+                        result["message"] = "Combat ended. Waiting for rewards...";
+                    }
                 }
             }
         }
         else if (currentRoom is EventRoom eventRoom)
         {
-            if (IsMapScreenOpenOrVisible())
+            if (NMapScreen.Instance is { IsOpen: true })
             {
                 result["state_type"] = "map";
                 result["map"] = BuildMultiplayerMapState(runState);
@@ -200,7 +217,7 @@ public static partial class McpMod
         }
         else if (currentRoom is MerchantRoom merchantRoom)
         {
-            if (IsMapScreenOpenOrVisible())
+            if (NMapScreen.Instance is { IsOpen: true })
             {
                 result["state_type"] = "map";
                 result["map"] = BuildMultiplayerMapState(runState);
@@ -208,10 +225,8 @@ public static partial class McpMod
             else
             {
                 var merchUI = NMerchantRoom.Instance;
-                if (merchUI?.Inventory != null && !merchUI.Inventory.IsOpen)
-                {
+                if (merchUI != null && !merchUI.Inventory.IsOpen)
                     merchUI.OpenInventory();
-                }
 
                 result["state_type"] = "shop";
                 result["shop"] = BuildShopState(merchantRoom, runState);
@@ -219,7 +234,7 @@ public static partial class McpMod
         }
         else if (currentRoom is RestSiteRoom restSiteRoom)
         {
-            if (IsMapScreenOpenOrVisible())
+            if (NMapScreen.Instance is { IsOpen: true })
             {
                 result["state_type"] = "map";
                 result["map"] = BuildMultiplayerMapState(runState);
@@ -232,7 +247,7 @@ public static partial class McpMod
         }
         else if (currentRoom is TreasureRoom treasureRoom)
         {
-            if (IsMapScreenOpenOrVisible())
+            if (NMapScreen.Instance is { IsOpen: true })
             {
                 result["state_type"] = "map";
                 result["map"] = BuildMultiplayerMapState(runState);
@@ -256,6 +271,7 @@ public static partial class McpMod
             ["floor"] = runState.TotalFloor,
             ["ascension"] = runState.AscensionLevel
         };
+
         result["current_run"] = BuildActiveRunContext();
 
         // All players summary (always included for multiplayer)
@@ -302,6 +318,27 @@ public static partial class McpMod
             battle["can_undo_end_turn"] = undoBlockedReason == null;
             battle["undo_end_turn_blocked_reason"] = undoBlockedReason;
         }
+
+        // All players in combat — full state for local player, summary for others
+        var players = new List<Dictionary<string, object?>>();
+        Dictionary<string, object?>? localPlayerState = null;
+        foreach (var player in runState.Players)
+        {
+            bool isLocal = LocalContext.IsMe(player);
+            // Full hand/piles/orbs only for local player; others get summary only
+            var playerState = isLocal ? BuildPlayerState(player) : BuildPlayerStateSummary(player);
+            playerState["is_local"] = isLocal;
+            playerState["is_alive"] = player.Creature.IsAlive;
+            playerState["is_ready_to_end_turn"] = CombatManager.Instance.IsPlayerReadyToEndTurn(player);
+            players.Add(playerState);
+            if (isLocal)
+                localPlayerState = playerState;
+        }
+        battle["players"] = players;
+
+        // Local player shortcut (same dict as the is_local=true entry in players)
+        if (localPlayerState != null)
+            battle["player"] = localPlayerState;
 
         // Enemies
         var enemies = new List<Dictionary<string, object?>>();
@@ -442,7 +479,7 @@ public static partial class McpMod
     {
         // Auto-open chest same as singleplayer. BeginRelicPicking() runs during
         // TreasureRoom.Enter(), so relics are already generated. The chest click
-        // just triggers the UI animation + gold via OneOffSynchronizer - same path
+        // just triggers the UI animation + gold via OneOffSynchronizer — same path
         // as a human click or the game's own AutoSlay handler.
         var state = BuildTreasureState(treasureRoom, runState);
 
@@ -483,13 +520,73 @@ public static partial class McpMod
         return state;
     }
 
+    /// <summary>
+    /// Builds player combat state without private info (hand, draw/discard/exhaust piles, orbs).
+    /// Used for non-local players in multiplayer — shows HP, block, energy, powers, relics, potions.
+    /// </summary>
+    private static Dictionary<string, object?> BuildPlayerStateSummary(Player player)
+    {
+        var state = new Dictionary<string, object?>();
+        var creature = player.Creature;
+        var combatState = player.PlayerCombatState;
+
+        state["character"] = SafeGetText(() => player.Character.Title);
+        state["hp"] = creature.CurrentHp;
+        state["max_hp"] = creature.MaxHp;
+        state["block"] = creature.Block;
+
+        if (combatState != null)
+        {
+            state["energy"] = combatState.Energy;
+            state["max_energy"] = combatState.MaxEnergy;
+
+            if (player.Character.ShouldAlwaysShowStarCounter || combatState.Stars > 0)
+                state["stars"] = combatState.Stars;
+        }
+
+        state["gold"] = player.Gold;
+        state["status"] = BuildPowersState(creature);
+
+        var relics = new List<Dictionary<string, object?>>();
+        foreach (var relic in player.Relics)
+        {
+            relics.Add(new Dictionary<string, object?>
+            {
+                ["id"] = relic.Id.Entry,
+                ["name"] = SafeGetText(() => relic.Title),
+                ["description"] = SafeGetText(() => relic.DynamicDescription),
+                ["counter"] = relic.ShowCounter ? relic.DisplayAmount : null,
+                ["keywords"] = BuildHoverTips(relic.HoverTipsExcludingRelic)
+            });
+        }
+        state["relics"] = relics;
+
+        var potions = new List<Dictionary<string, object?>>();
+        int slotIndex = 0;
+        foreach (var potion in player.PotionSlots)
+        {
+            if (potion != null)
+            {
+                potions.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = potion.Id.Entry,
+                    ["name"] = SafeGetText(() => potion.Title),
+                    ["slot"] = slotIndex
+                });
+            }
+            slotIndex++;
+        }
+        state["potions"] = potions;
+
+        return state;
+    }
+
     private static List<Dictionary<string, object?>> BuildAllPlayersState(RunState runState)
     {
-        bool inCombat = CombatManager.Instance.IsInProgress;
         var players = new List<Dictionary<string, object?>>();
         foreach (var player in runState.Players)
         {
-            var entry = new Dictionary<string, object?>
+            players.Add(new Dictionary<string, object?>
             {
                 ["character"] = SafeGetText(() => player.Character.Title),
                 ["is_local"] = LocalContext.IsMe(player),
@@ -497,23 +594,7 @@ public static partial class McpMod
                 ["max_hp"] = player.Creature.MaxHp,
                 ["gold"] = player.Gold,
                 ["is_alive"] = player.Creature.IsAlive
-            };
-            if (inCombat)
-            {
-                entry["block"] = player.Creature.Block;
-                entry["is_ready_to_end_turn"] = CombatManager.Instance.IsPlayerReadyToEndTurn(player);
-
-                // Include pets for teammates (local player's pets are under "player")
-                if (!LocalContext.IsMe(player))
-                {
-                    var pets = BuildPetsState(player);
-                    if (pets.Count > 0)
-                    {
-                        entry["pets"] = pets;
-                    }
-                }
-            }
-            players.Add(entry);
+            });
         }
         return players;
     }

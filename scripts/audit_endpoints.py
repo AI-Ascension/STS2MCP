@@ -26,12 +26,15 @@ EXPECTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET", "/api/v1/profile"),
     ("GET", "/api/v1/compendium"),
     ("GET", "/api/v1/bestiary"),
+    ("GET", "/api/v1/wiki"),
     ("GET", "/api/v1/glossary/cards"),
     ("GET", "/api/v1/glossary/relics"),
     ("GET", "/api/v1/glossary/potions"),
     ("GET", "/api/v1/glossary/keywords"),
     ("GET", "/api/v1/profiles"),
     ("POST", "/api/v1/profiles"),
+    ("GET", "/api/v1/snapshots"),
+    ("POST", "/api/v1/snapshots"),
 ]
 
 
@@ -268,10 +271,14 @@ def audit_docs(repo: Path) -> None:
         path_pos = mcp_mod.find(f'path == "{path}"')
         if path_pos == -1:
             fail(f"could not locate route block for {method} {path}")
-        next_pos = mcp_mod.find("else if (path ==", path_pos + 1)
-        block = mcp_mod[path_pos: next_pos if next_pos != -1 else mcp_mod.find("else\n", path_pos)]
+        # Match the next route-level branch, not the inner unsupported-method
+        # else in the last route (which would truncate its fallback).
+        next_route = re.search(r"\n {12}else(?: if|\n)", mcp_mod[path_pos:])
+        block = mcp_mod[path_pos: path_pos + next_route.start() if next_route else len(mcp_mod)]
         if f'request.HttpMethod == "{method}"' not in block:
             fail(f"HTTP route table missing {method} handling for {path}")
+        if "SendMethodNotAllowed(response)" not in block:
+            fail(f"HTTP route table missing structured method_not_allowed fallback for {path}")
 
     for required_fragment in [
         "status/kind envelope and active-run context",
@@ -282,7 +289,7 @@ def audit_docs(repo: Path) -> None:
         if required_fragment not in mcp_mod:
             fail(f"root endpoint index missing response-context description: {required_fragment}")
 
-    for required_fragment in ['"kind": "api_index"', '"version": "0.4.0"', '"endpoint_count": 14']:
+    for required_fragment in ['"kind": "api_index"', '"version": "0.4.0"', '"endpoint_count": 17']:
         if required_fragment not in readme:
             fail(f"README root endpoint example missing API index field: {required_fragment}")
     for method, path in EXPECTED_ENDPOINTS:
@@ -322,7 +329,7 @@ def audit_action_surface(repo: Path) -> None:
     if missing_mcp:
         fail(f"implemented actions missing MCP wrappers: {missing_mcp}")
 
-    allowed_non_switch_posts = {"menu_select", "switch", "delete"}
+    allowed_non_switch_posts = {"menu_select", "switch", "delete", "create", "resume"}
     extra_mcp = sorted(mcp_posts - sp_actions - mp_actions - allowed_non_switch_posts)
     if extra_mcp:
         fail(f"MCP posts unknown actions: {extra_mcp}")
@@ -340,10 +347,13 @@ def audit_action_surface(repo: Path) -> None:
         "_menu_select_post",
         "_profiles_post",
         "_profiles_get",
+        "_snapshots_get",
+        "_snapshots_post",
         "_profile_get",
         "_compendium_get",
         "_settings_get",
         "_bestiary_get",
+        "_wiki_get",
         "_glossary_get",
         "_root_get",
     }
@@ -858,10 +868,28 @@ def audit_static_save_roots(repo: Path) -> None:
     if not match:
         fail("could not locate EnumerateSaveRoots for save-root audit")
     body = match.group(0)
-    if "accountRoots.Count == 1" in body or "yielded.Count > 0" in body:
-        fail("save-root fallback must search all Steam account roots after the active account")
+    # Identity is a safety boundary, not a search preference. The compiled fixture
+    # suite scripts/test_save_roots.py verifies these guards behaviorally.
+    if "identities.Count != 1" not in body or "GetActiveSteamId()" not in body:
+        fail("save-root discovery must fail closed for ambiguous account identity")
     if "Directory.GetDirectories(steamRoot)" not in body:
-        fail("save-root fallback must enumerate Steam account directories")
+        fail("unknown-identity discovery must inspect account directories before choosing one identity")
+    for method, following in [
+        ("FindRunHistoryDirectory", "GetProfileRootFromProgressPath"),
+        ("ResolveCurrentRunPath(string?", "GetSaveDirectoryFromProgressPath"),
+    ]:
+        start = compendium.index("    private static string? " + method)
+        end = compendium.index("    private static ", start + 15)
+        method_body = compendium[start:end]
+        if "Path.IsPathRooted(" not in method_body:
+            fail(f"{method} must not fall back from an authoritative absolute progress path")
+    snapshots = (repo / "McpMod.Snapshots.cs").read_text(encoding="utf-8")
+    start = snapshots.index("    private static string? ResolveRunSavePath(")
+    end = snapshots.index("    private static string GetSnapshotRoot()", start)
+    if "Path.IsPathRooted(progressPath)" not in snapshots[start:end]:
+        fail("snapshot source/restore must not fall back from an authoritative absolute path")
+    if not (repo / "scripts" / "test_save_roots.py").exists():
+        fail("compiled account-isolation regression fixtures are required")
 
     compendium_response_match = re.search(
         r"private static object BuildCompendiumResponse\(.*?\n    private sealed class CompendiumSnapshot",
@@ -924,7 +952,64 @@ def audit_static_save_roots(repo: Path) -> None:
         for required_fragment in ["progress_path", "resolved_progress_path", "profile_root", "save_scope", "current_run"]:
             if required_fragment not in doc_text:
                 fail(f"{doc_name} missing profile/compendium context documentation: {required_fragment}")
-    print("saves: multi-account fallback and profile/compendium context enforced")
+    print("saves: account-isolation guards and profile/compendium context checked; run test_save_roots.py for behavior")
+
+
+def audit_static_snapshots(repo: Path) -> None:
+    snapshots = (repo / "McpMod.Snapshots.cs").read_text(encoding="utf-8")
+
+    restore_match = re.search(
+        r"private static string\? ResolveSnapshotRestorePath\(RunSnapshotMetadata snapshot\)(.*?)\n    private static bool IsSupportedRunSaveFileName",
+        snapshots,
+        re.S,
+    )
+    if not restore_match:
+        fail("could not locate ResolveSnapshotRestorePath snapshot audit block")
+    restore_body = restore_match.group(1)
+    if "snapshot.SourceSavePath" in restore_body:
+        fail("snapshot restore destination must not trust SourceSavePath from metadata")
+    for required_fragment in [
+        "SaveManager.Instance",
+        "saveManager.CurrentProfileId",
+        "snapshot.ProfileId != activeProfileId",
+        "GetProfileProgressPath(activeProfileId)",
+        "GetProfileRootFromProgressPath(progressPath, activeProfileId)",
+        "ResolveRunSavePath(activeProfileId, activeProfileRoot, snapshot.SaveFileName, requireExists: false)",
+    ]:
+        if required_fragment not in restore_body:
+            fail(f"snapshot restore should derive destination from active profile/save roots, missing: {required_fragment}")
+
+    enumerate_match = re.search(
+        r"private static IEnumerable<RunSnapshotMetadata> EnumerateSnapshots\(\)(.*?)\n    private static string\? ResolveSnapshotRestorePath",
+        snapshots,
+        re.S,
+    )
+    if not enumerate_match:
+        fail("could not locate EnumerateSnapshots snapshot audit block")
+    enumerate_body = enumerate_match.group(1)
+    for forbidden_fragment in [
+        "SearchOption.AllDirectories",
+        "string.IsNullOrWhiteSpace(metadata.SnapshotSavePath)",
+        ": metadata.SnapshotSavePath",
+        "catch\n            {",
+    ]:
+        if forbidden_fragment in enumerate_body:
+            fail(f"snapshot enumeration has unsafe/opaque metadata handling: {forbidden_fragment}")
+    for required_fragment in [
+        "Directory.EnumerateDirectories(root)",
+        "IsSupportedRunSaveFileName(metadata.SaveFileName)",
+        "metadata.SnapshotPath = directory",
+        "metadata.SnapshotSavePath = Path.Combine(directory, metadata.SaveFileName)",
+        "catch (Exception ex)",
+        "Failed to parse snapshot metadata",
+    ]:
+        if required_fragment not in enumerate_body:
+            fail(f"snapshot enumeration missing safe metadata handling: {required_fragment}")
+
+    if "Snapshot failed: {ex}" not in snapshots:
+        fail("snapshot failure logging should include full exception details")
+
+    print("snapshots: metadata trust boundaries and diagnostics enforced")
 
 
 def audit_state_surface(repo: Path) -> None:
@@ -1517,7 +1602,7 @@ def audit_live(base_url: str) -> None:
         status, data = load_json_url(base_url.rstrip("/") + path)
         assert_error_body(path, status, data)
 
-        if path in {"/api/v1/settings", "/api/v1/profile", "/api/v1/compendium", "/api/v1/bestiary", "/api/v1/profiles"} and status != 200:
+        if path in {"/api/v1/settings", "/api/v1/profile", "/api/v1/compendium", "/api/v1/bestiary", "/api/v1/profiles", "/api/v1/snapshots"} and status != 200:
             fail(f"{path} expected HTTP 200, got {status}: {data}")
         if path == "/api/v1/multiplayer":
             if status not in {200, 409}:
@@ -1840,6 +1925,26 @@ def audit_live(base_url: str) -> None:
                 fail(f"{path} expected profile slots 1, 2, 3, got {seen_profile_ids}")
             if current_slots != 1:
                 fail(f"{path} expected exactly one current profile slot, got {current_slots}")
+        if path == "/api/v1/snapshots":
+            if not isinstance(data, dict) or data.get("status") != "ok" or data.get("kind") != "snapshots":
+                fail(f"{path} expected structured snapshots status/kind, got {data}")
+            if not isinstance(data.get("enabled"), bool):
+                fail(f"{path} expected enabled bool, got {data}")
+            if data.get("enable_env_var") != "STS2_MCP_SNAPSHOTS":
+                fail(f"{path} expected STS2_MCP_SNAPSHOTS env var hint, got {data}")
+            if data.get("snapshot_root_env_var") != "STS2_MCP_SNAPSHOT_DIR":
+                fail(f"{path} expected STS2_MCP_SNAPSHOT_DIR env var hint, got {data}")
+            if not isinstance(data.get("snapshot_root"), str) or not data["snapshot_root"]:
+                fail(f"{path} expected snapshot_root string, got {data}")
+            snapshots = data.get("snapshots")
+            if not isinstance(snapshots, list) or data.get("count") != len(snapshots):
+                fail(f"{path} expected snapshots list with matching count, got {data}")
+            for snapshot in snapshots:
+                if not isinstance(snapshot, dict):
+                    fail(f"{path} expected snapshot entries to be objects, got {snapshot}")
+                for required_field in ["id", "created_at_utc", "profile_id", "profile_root", "save_scope", "game_mode", "save_file_name", "snapshot_save_path"]:
+                    if required_field not in snapshot:
+                        fail(f"{path} snapshot entry missing {required_field}: {snapshot}")
         if path == "/api/v1/bestiary":
             if not isinstance(data, dict) or data.get("status") != "ok" or data.get("kind") != "bestiary":
                 fail(f"{path} expected structured bestiary status/kind, got {data}")
@@ -2052,6 +2157,11 @@ def audit_live(base_url: str) -> None:
         ("/api/v1/profiles", b'{"action": "switch", "profile_id": 999999999999}', 400, "invalid_profile_id_type"),
         ("/api/v1/profiles", b'{"action": "switch", "profile_id": 4}', 400, "invalid_profile_id"),
         ("/api/v1/profiles", b'{"action": "unknown", "profile_id": 1}', 400, "unknown_profile_action"),
+        ("/api/v1/snapshots", b"{", 400, "invalid_json"),
+        ("/api/v1/snapshots", b"{}", 400, "missing_action"),
+        ("/api/v1/snapshots", b'{"action": 1}', 400, "invalid_action_type"),
+        ("/api/v1/snapshots", b'{"action": "resume"}', 400, "missing_snapshot_id"),
+        ("/api/v1/snapshots", b'{"action": "unknown"}', 400, "unknown_snapshot_action"),
     ]
     for path, body, expected_status, expected_code in post_validation_checks:
         status, data = load_json_url(base_url.rstrip("/") + path, "POST", body)
@@ -2139,6 +2249,7 @@ def audit_live(base_url: str) -> None:
         "/api/v1/profile",
         "/api/v1/compendium",
         "/api/v1/bestiary",
+        "/api/v1/wiki",
         "/api/v1/glossary/cards",
         "/api/v1/glossary/relics",
         "/api/v1/glossary/potions",
@@ -2189,6 +2300,7 @@ def main() -> None:
     audit_static_bestiary_determinism(repo)
     audit_static_card_glossary_metadata(repo)
     audit_static_save_roots(repo)
+    audit_static_snapshots(repo)
     audit_state_surface(repo)
     if not args.skip_live:
         audit_live(args.base_url)

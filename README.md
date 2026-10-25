@@ -69,7 +69,7 @@ A successful response looks like:
   "kind": "api_index",
   "version": "0.4.0",
   "bound_prefixes": ["http://localhost:15526/", "http://127.0.0.1:15526/"],
-  "endpoint_count": 14,
+  "endpoint_count": 17,
   "endpoints": [
     { "method": "GET", "path": "/api/v1/singleplayer" },
     { "method": "POST", "path": "/api/v1/singleplayer" },
@@ -79,12 +79,15 @@ A successful response looks like:
     { "method": "GET", "path": "/api/v1/profile" },
     { "method": "GET", "path": "/api/v1/compendium" },
     { "method": "GET", "path": "/api/v1/bestiary" },
+    { "method": "GET", "path": "/api/v1/wiki" },
     { "method": "GET", "path": "/api/v1/glossary/cards" },
     { "method": "GET", "path": "/api/v1/glossary/relics" },
     { "method": "GET", "path": "/api/v1/glossary/potions" },
     { "method": "GET", "path": "/api/v1/glossary/keywords" },
     { "method": "GET", "path": "/api/v1/profiles" },
-    { "method": "POST", "path": "/api/v1/profiles" }
+    { "method": "POST", "path": "/api/v1/profiles" },
+    { "method": "GET", "path": "/api/v1/snapshots" },
+    { "method": "POST", "path": "/api/v1/snapshots" }
   ]
 }
 ```
@@ -103,6 +106,26 @@ multiplayer menu retry behavior:
 ```bash
 uv run --project mcp python scripts/test_mcp_server.py
 ```
+
+#### Optional run snapshots
+
+Launch the game with `STS2_MCP_SNAPSHOTS=1` to capture a snapshot every time the game saves the active run. Snapshots copy `current_run.save` or `current_run_mp.save` to a separate snapshot directory and include metadata such as profile, run ID, save time, mode, and source path.
+
+Set `STS2_MCP_SNAPSHOT_DIR` to choose the snapshot directory. Without it, snapshots are stored under the detected account save root in `sts2_mcp_snapshots`.
+
+Use `GET /api/v1/snapshots` to list snapshots, `POST /api/v1/snapshots` with `{"action":"create"}` to create one manually, and `{"action":"resume","snapshot_id":"..."}` to restore a snapshot to the active profile's current-run save slot. Restore is rejected while a run is in progress; after restoring, use the in-game Continue flow.
+
+Manual snapshots are rejected on map and shop screens. STS2 saves resume the latest visited room rather than the idle map screen, and shop saves do not persist the current merchant inventory. Choose a map node before snapshotting, and snapshot before entering a shop or after leaving it.
+
+#### Optional run snapshots
+
+Launch the game with `STS2_MCP_SNAPSHOTS=1` to capture a snapshot every time the game saves the active run. Snapshots copy `current_run.save` or `current_run_mp.save` to a separate snapshot directory and include metadata such as profile, run ID, save time, mode, and source path.
+
+Set `STS2_MCP_SNAPSHOT_DIR` to choose the snapshot directory. Without it, snapshots are stored under the detected account save root in `sts2_mcp_snapshots`.
+
+Use `GET /api/v1/snapshots` to list snapshots, `POST /api/v1/snapshots` with `{"action":"create"}` to create one manually, and `{"action":"resume","snapshot_id":"..."}` to restore a snapshot to the active profile's current-run save slot. Restore is rejected while a run is in progress; after restoring, use the in-game Continue flow.
+
+Manual snapshots are rejected on map and shop screens. STS2 saves resume the latest visited room rather than the idle map screen, and shop saves do not persist the current merchant inventory. Choose a map node before snapshotting, and snapshot before entering a shop or after leaving it.
 
 ### 2. Give Your AI Instructions to Interact with the Game
 
@@ -144,9 +167,19 @@ Add the server to your AI client's MCP config:
 
 Restart your Claude session after adding the config. To verify the MCP server is working, ask Claude to call `get_game_state` — with the game running, it should return the current game state.
 
-The MCP server accepts `--host` and `--port` options if you need non-default settings.
+The MCP server accepts `--host` and `--port` options if you need non-default settings. If the game mod is launched with a custom `STS2_PORT`, configure the MCP bridge to use the same port, for example `uv run --directory /path/to/STS2_MCP/mcp python server.py --port 15527`.
 
-Flag `--no-trust-env` can be used to disable `requests` from picking up proxy settings from the environment, which can cause connection issues if you are running the server in a container.
+Flag `--no-trust-env` can be used to disable the HTTP client from picking up proxy settings from the environment, which can cause connection issues if you are running the server in a container.
+
+Optional bridge settings can also be placed in `mcp/.env`:
+
+```dotenv
+STS2_HOST=localhost
+STS2_PORT=15526
+STS2_MCP_AUTH_TOKEN=your-token
+```
+
+When `STS2_MCP_AUTH_TOKEN` is set, the MCP bridge sends it to the game HTTP API as an `Authorization: Bearer ...` header. Shell environment variables take precedence over values in `mcp/.env`. If you change the mod's game API port, set the same `STS2_PORT` for the MCP bridge.
 
 ## For Developers
 

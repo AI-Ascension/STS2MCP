@@ -1,0 +1,141 @@
+name: Package and Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. 0.3.0 or v0.3.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # ---------------------------------------------------------------
+      # Determine version from mod_manifest.json and validate tag
+      # ---------------------------------------------------------------
+      - name: Read version from mod_manifest.json
+        id: version
+        run: |
+          MOD_VERSION=$(python3 -c "import json; d=json.load(open('mod_manifest.json')); print(d['version'])")
+          echo "mod_version=$MOD_VERSION" >> "$GITHUB_OUTPUT"
+
+          # Determine the tag name (strip leading 'v' for comparison)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG_BARE="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag_bare=$TAG_BARE" >> "$GITHUB_OUTPUT"
+
+          if [ "$TAG_BARE" != "$MOD_VERSION" ]; then
+            echo "::error::Tag '$TAG' does not match mod_manifest.json version '$MOD_VERSION'"
+            exit 1
+          fi
+          echo "Version check passed: $MOD_VERSION"
+
+      # ---------------------------------------------------------------
+      # Build stub reference assemblies (replaces proprietary game DLLs)
+      # ---------------------------------------------------------------
+      - name: Build stub assemblies
+        run: bash stubs/build-stubs.sh stubs/libs-game/data_sts2_windows_x86_64
+
+      # ---------------------------------------------------------------
+      # Build the mod DLL
+      # ---------------------------------------------------------------
+      - name: Build STS2_MCP.dll
+        run: |
+          dotnet build STS2_MCP.csproj \
+            -c Release \
+            -p:STS2GameDir="${GITHUB_WORKSPACE}/stubs/libs-game" \
+            --nologo
+          echo "Built DLL:"
+          find bin/Release -name "STS2_MCP.dll" | head -1
+
+      - name: Locate built DLL
+        id: dll
+        run: |
+          DLL_PATH=$(find bin/Release -name "STS2_MCP.dll" | head -1)
+          if [ -z "$DLL_PATH" ]; then
+            echo "::error::STS2_MCP.dll not found after build"
+            exit 1
+          fi
+          echo "path=$DLL_PATH" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------
+      # Generate the PCK file
+      # ---------------------------------------------------------------
+      - name: Generate STS2_MCP.pck
+        run: |
+          python3 scripts/make_pck.py mod_manifest.json STS2_MCP.pck
+          echo "Generated PCK: $(wc -c < STS2_MCP.pck) bytes"
+
+      # ---------------------------------------------------------------
+      # Assemble the release archive
+      # ---------------------------------------------------------------
+      - name: Assemble release archive
+        id: archive
+        run: |
+          VERSION="${{ steps.version.outputs.mod_version }}"
+          ARCHIVE="STS2_MCP-v${VERSION}.zip"
+
+          mkdir -p "dist/STS2_MCP-v${VERSION}"
+
+          # Mod files (install to <game>/mods/)
+          cp "${{ steps.dll.outputs.path }}" "dist/STS2_MCP-v${VERSION}/STS2_MCP.dll"
+          cp STS2_MCP.pck                    "dist/STS2_MCP-v${VERSION}/STS2_MCP.pck"
+          cp mod_manifest.json               "dist/STS2_MCP-v${VERSION}/mod_manifest.json"
+
+          # MCP server (Python bridge for Claude Desktop / Claude Code)
+          cp -r mcp "dist/STS2_MCP-v${VERSION}/mcp"
+
+          # Documentation
+          cp README.md "dist/STS2_MCP-v${VERSION}/README.md"
+
+          cd dist
+          zip -r "../$ARCHIVE" "STS2_MCP-v${VERSION}/"
+          cd ..
+
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "Created $ARCHIVE:"
+          unzip -l "$ARCHIVE"
+
+      # ---------------------------------------------------------------
+      # Upload artifact (useful for workflow_dispatch runs without a tag)
+      # ---------------------------------------------------------------
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.archive.outputs.archive }}
+          path: ${{ steps.archive.outputs.archive }}
+
+      # ---------------------------------------------------------------
+      # Create GitHub Release
+      # ---------------------------------------------------------------
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: v${{ steps.version.outputs.mod_version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: ${{ steps.archive.outputs.archive }}
