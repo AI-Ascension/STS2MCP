@@ -91,7 +91,7 @@ Profile-aware and run-aware JSON responses expose shared save/run identity field
 - `save_scope`
 - `current_run`
 
-`current_run` always identifies the active profile/save context. Save-backed fields such as `run_id`, `seed`, `start_time`, `save_time`, and `run_time` are present when the active `current_run.save` file exposes them.
+`current_run` always identifies the active profile/save context. Live state and profile responses select `current_run.save` for singleplayer or `current_run_mp.save` for multiplayer, using the same active-mode selection as snapshots. Save-backed fields such as `run_id`, `seed`, `start_time`, `save_time`, and `run_time` are present only when that mode's save exposes them. A missing multiplayer save never substitutes singleplayer identity. The compendium snapshot retains its singleplayer `current_run.save` scope.
 
 `run_id` identifies one concrete attempt and follows this format:
 
@@ -171,7 +171,7 @@ to enable automatic snapshot capture whenever the game saves the active run. Use
 STS2_MCP_SNAPSHOT_DIR=/path/to/snapshot/root
 ```
 
-to override the snapshot root. Without an override, snapshots are stored under the detected active account save root in `sts2_mcp_snapshots`.
+to override the snapshot root. Without an override, snapshots are stored under the unambiguous active account save root in `sts2_mcp_snapshots`. A rooted game-provided progress path is authoritative, even if its files do not yet exist. For a nonstandard rooted save layout, the snapshot directory is placed beside the progress file. If no account can be determined safely, snapshot operations fail rather than sharing a fallback directory.
 
 The snapshot API has two routes:
 
@@ -280,6 +280,8 @@ Common route/validation error codes include:
 - `missing_snapshot_id`
 - `unknown_snapshot_action`
 - `invalid_format`
+- `missing_query`
+- `invalid_item_type`
 
 State and action conflict error codes include:
 
@@ -306,6 +308,7 @@ Read endpoint availability/failure codes include:
 - `profile_build_failed`
 - `profiles_read_failed`
 - `compendium_build_failed`
+- `wiki_search_failed`
 - `bestiary_build_failed`
 - `glossary_build_failed`
 - `snapshots_read_failed`
@@ -313,6 +316,8 @@ Read endpoint availability/failure codes include:
 - `snapshot_resume_failed`
 - `singleplayer_state_read_failed`
 - `multiplayer_state_read_failed`
+
+Compendium and Wiki report missing active-profile data with HTTP 503 and `profile_data_unavailable`. Wiki query/item-type validation returns HTTP 400 with `missing_query`/`invalid_item_type`; valid requests with no matching discovered items remain HTTP 200.
 
 The MCP bridge preserves structured endpoint error bodies and adds `http_status`, so MCP clients can branch on the same error fields that HTTP clients receive.
 
@@ -385,3 +390,11 @@ uv run --project mcp python scripts/test_mcp_server.py
 ```
 
 The audit suite checks endpoint/index/doc parity, response envelopes, structured errors, normalized save paths, profile/Compendium schemas, glossary schemas, Bestiary schemas, settings schemas, snapshot endpoint contracts, state format validation, action-readiness fields, and safe validation failures that should not mutate a run. The MCP bridge tests cover `.env` precedence and auth-header injection in addition to structured endpoint error propagation.
+
+### Save account isolation
+
+A known active Steam identity restricts discovery to that identity across OS data roots. Missing account directories or saves do not permit reading or restoring another account. When Steam identity is unavailable, discovery is allowed only if every observed account directory has the same identity; ambiguous or unreadable discovery fails closed. Multiple OS roots for that same identity remain supported.
+
+Absolute progress paths supplied by the game are authoritative for progress, run history, current-run reads, snapshot sources and restore destinations. A missing file or directory never triggers account fallback. Snapshot restore requires an existing destination save directory. Explicit `STS2_MCP_SNAPSHOT_DIR` remains an operator-selected archive location; it does not change restore destination isolation.
+
+This intentionally replaces the older all-account fallback contract, which could read or overwrite a different account sharing a profile number. Run `python scripts/test_save_roots.py` with .NET 9 on PATH for source-extracted behavioral fixtures covering same-slot accounts, missing paths, ambiguous identities and duplicated OS roots. These fixtures use synthetic saves, not a live game.

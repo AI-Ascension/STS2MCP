@@ -10,6 +10,7 @@ HTTP API served by the STS2_MCP mod on `localhost:15526`. No authentication. Loc
 - `GET  /api/v1/settings` — read settings and preferences
 - `GET  /api/v1/profile` — read current profile progress
 - `GET  /api/v1/compendium` — read Compendium-shaped profile progress
+- `GET  /api/v1/bestiary` — read monster and encounter metadata
 - `GET  /api/v1/wiki` — fuzzy-search discovered card/relic wiki entries
 - `GET  /api/v1/profiles` — list profile slots
 - `POST /api/v1/profiles` — switch or delete profile slots
@@ -1211,6 +1212,12 @@ The response is built from `SaveManager.Progress`, the active profile's `progres
   }
 }
 ```
+
+### `GET /api/v1/bestiary`
+
+Returns monster and encounter metadata with `status`, `kind`, `monster_count`,
+`encounter_count`, `monsters`, and `encounters`. Profile-specific fight stats are
+also available from `/api/v1/compendium`.
 
 ### `GET /api/v1/wiki`
 

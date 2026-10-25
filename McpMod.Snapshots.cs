@@ -459,6 +459,10 @@ public static partial class McpMod
                 return path;
         }
 
+        // Never redirect an authoritative missing path to another account or OS root.
+        if (!string.IsNullOrWhiteSpace(progressPath) && Path.IsPathRooted(progressPath))
+            return null;
+
         foreach (var saveRoot in EnumerateSaveRoots())
         {
             var path = Path.Combine(saveRoot, profileRoot, "saves", fileName);
@@ -483,12 +487,27 @@ public static partial class McpMod
         if (!string.IsNullOrWhiteSpace(configured))
             return Path.GetFullPath(System.Environment.ExpandEnvironmentVariables(configured));
 
+        var saveManager = SaveManager.Instance;
+        var progressPath = saveManager == null ? null : GetProfileProgressPath(saveManager.CurrentProfileId);
+        if (!string.IsNullOrWhiteSpace(progressPath) && Path.IsPathRooted(progressPath))
+        {
+            var saveDirectory = Path.GetDirectoryName(progressPath);
+            if (string.IsNullOrWhiteSpace(saveDirectory))
+                throw new InvalidOperationException("Cannot determine snapshot root from active progress path.");
+            var profileRoot = GetProfileRootFromProgressPath(progressPath, saveManager!.CurrentProfileId);
+            var suffix = Path.Combine(profileRoot.Replace('/', Path.DirectorySeparatorChar), "saves");
+            var normalized = saveDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (normalized.EndsWith(Path.DirectorySeparatorChar + suffix, StringComparison.OrdinalIgnoreCase))
+                return Path.Combine(normalized[..^suffix.Length], SnapshotDirectoryName);
+            // Nonstandard absolute game paths remain authoritative; keep snapshots beside that save.
+            return Path.Combine(saveDirectory, SnapshotDirectoryName);
+        }
+
         var saveRoot = EnumerateSaveRoots().FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(saveRoot))
             return Path.Combine(saveRoot, SnapshotDirectoryName);
 
-        var modDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-        return Path.Combine(modDir ?? System.Environment.CurrentDirectory, SnapshotDirectoryName);
+        throw new InvalidOperationException("Cannot determine an unambiguous active save account for snapshots.");
     }
 
     private static bool AreSnapshotsEnabled()

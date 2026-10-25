@@ -1,3 +1,5 @@
+using MegaCrit.Sts2.Core.Nodes.Screens.GameOverScreen;
+using MegaCrit.Sts2.Core.Models.Events;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -24,7 +26,11 @@ public static partial class McpMod
 {
     private static Dictionary<string, object?> BuildMultiplayerGameState()
     {
-        var result = new Dictionary<string, object?>();
+        var result = new Dictionary<string, object?>
+        {
+            ["status"] = "ok",
+            ["kind"] = "multiplayer_state"
+        };
 
         if (!RunManager.Instance.IsInProgress)
         {
@@ -45,6 +51,16 @@ public static partial class McpMod
             result["state_type"] = "error";
             result["message"] = "Not in a multiplayer run. Use /api/v1/singleplayer instead.";
             return result;
+        }
+
+        // Blocking tutorial/pop-up actions must be discoverable through the MP
+        // endpoint; the SP endpoint is intentionally unavailable during MP runs.
+        var tree = Godot.Engine.GetMainLoop() as Godot.SceneTree;
+        if (tree?.Root != null)
+        {
+            var ftueState = BuildVisibleFtueState(tree.Root);
+            if (ftueState != null)
+                return WithStateEnvelope(ftueState, "multiplayer_state");
         }
 
         // Multiplayer metadata
@@ -93,6 +109,28 @@ public static partial class McpMod
             result["state_type"] = "crystal_sphere";
             result["crystal_sphere"] = BuildCrystalSphereState(crystalSphereScreen, runState);
         }
+        // Reward overlays also appear in events, treasure rooms and rest sites.
+        // Keep the map's post-reward precedence, but never dispatch an active
+        // reward overlay to the underlying room's actions.
+        else if (!IsMapScreenOpenOrVisible() && topOverlay is NCardRewardSelectionScreen overlayCardReward)
+        {
+            result["state_type"] = "card_reward";
+            result["card_reward"] = BuildCardRewardState(overlayCardReward);
+        }
+        else if (!IsMapScreenOpenOrVisible() && topOverlay is NRewardsScreen overlayRewards)
+        {
+            result["state_type"] = "rewards";
+            result["rewards"] = BuildRewardsState(overlayRewards, runState);
+        }
+        else if (topOverlay is NGameOverScreen)
+        {
+            result["state_type"] = "game_over";
+            result["game_over"] = new Dictionary<string, object?>
+            {
+                ["message"] = "Run ended.",
+                ["options"] = new List<string> { "main_menu" }
+            };
+        }
         else if (topOverlay is IOverlayScreen
                  && topOverlay is not NRewardsScreen
                  && topOverlay is not NCardRewardSelectionScreen)
@@ -103,6 +141,11 @@ public static partial class McpMod
                 ["screen_type"] = topOverlay.GetType().Name,
                 ["message"] = $"An overlay ({topOverlay.GetType().Name}) is active. It may require manual interaction in-game."
             };
+        }
+        else if (IsMapScreenOpenOrVisible())
+        {
+            result["state_type"] = "map";
+            result["map"] = BuildMultiplayerMapState(runState);
         }
         else if (currentRoom is CombatRoom combatRoom)
         {
@@ -138,7 +181,7 @@ public static partial class McpMod
                     }
                     else if (overlay is NRewardsScreen rewardsScreen)
                     {
-                        result["state_type"] = "combat_rewards";
+                        result["state_type"] = "rewards";
                         result["rewards"] = BuildRewardsState(rewardsScreen, runState);
                     }
                     else
@@ -155,6 +198,11 @@ public static partial class McpMod
             {
                 result["state_type"] = "map";
                 result["map"] = BuildMultiplayerMapState(runState);
+            }
+            else if (eventRoom.CanonicalEvent is FakeMerchant)
+            {
+                result["state_type"] = "fake_merchant";
+                result["fake_merchant"] = BuildFakeMerchantState(eventRoom, runState);
             }
             else
             {
@@ -224,8 +272,17 @@ public static partial class McpMod
             ["ascension"] = runState.AscensionLevel
         };
 
+        result["current_run"] = BuildActiveRunContext();
+
         // All players summary (always included for multiplayer)
         result["players"] = BuildAllPlayersState(runState);
+
+        // Always include full local player data (relics, potions, deck, etc.) on every screen,
+        // matching singleplayer behavior from BuildGameState()
+        if (localPlayer != null)
+        {
+            result["player"] = BuildPlayerState(localPlayer);
+        }
 
         return result;
     }
@@ -244,7 +301,23 @@ public static partial class McpMod
         battle["round"] = combatState.RoundNumber;
         battle["turn"] = combatState.CurrentSide.ToString().ToLower();
         battle["is_play_phase"] = CombatManager.Instance.IsPlayPhase;
+        battle["player_actions_disabled"] = CombatManager.Instance.PlayerActionsDisabled;
         battle["all_players_ready"] = CombatManager.Instance.AllPlayersReadyToEndTurn();
+
+        var localPlayer = LocalContext.GetMe(runState);
+        if (localPlayer != null)
+        {
+            var isReady = CombatManager.Instance.IsPlayerReadyToEndTurn(localPlayer);
+            battle["local_player_ready_to_end_turn"] = isReady;
+
+            var endTurnBlockedReason = GetMultiplayerEndTurnBlockedReason(localPlayer);
+            battle["can_end_turn"] = endTurnBlockedReason == null;
+            battle["end_turn_blocked_reason"] = endTurnBlockedReason;
+
+            var undoBlockedReason = GetMultiplayerUndoEndTurnBlockedReason(localPlayer);
+            battle["can_undo_end_turn"] = undoBlockedReason == null;
+            battle["undo_end_turn_blocked_reason"] = undoBlockedReason;
+        }
 
         // All players in combat — full state for local player, summary for others
         var players = new List<Dictionary<string, object?>>();
@@ -278,6 +351,48 @@ public static partial class McpMod
         battle["enemies"] = enemies;
 
         return battle;
+    }
+
+    private static string? GetMultiplayerEndTurnBlockedReason(Player player)
+    {
+        if (!CombatManager.Instance.IsInProgress)
+            return "NotInCombat";
+        if (!CombatManager.Instance.IsPlayPhase)
+            return "NotInPlayPhase";
+        if (CombatManager.Instance.PlayerActionsDisabled)
+            return "PlayerActionsDisabled";
+        if (!player.Creature.IsAlive)
+            return "PlayerDead";
+        if (CombatManager.Instance.IsPlayerReadyToEndTurn(player))
+            return "AlreadyReady";
+
+        var hand = NCombatRoom.Instance?.Ui?.Hand;
+        if (hand != null && hand.InCardPlay)
+            return "CardInPlay";
+        if (hand != null && hand.CurrentMode != NPlayerHand.Mode.Play)
+            return "HandSelectionMode";
+        if (player.Creature.CombatState == null)
+            return "NoCombatState";
+
+        return null;
+    }
+
+    private static string? GetMultiplayerUndoEndTurnBlockedReason(Player player)
+    {
+        if (!CombatManager.Instance.IsInProgress)
+            return "NotInCombat";
+        if (!CombatManager.Instance.IsPlayPhase)
+            return "NotInPlayPhase";
+        if (CombatManager.Instance.PlayerActionsDisabled)
+            return "PlayerActionsDisabled";
+        if (!player.Creature.IsAlive)
+            return "PlayerDead";
+        if (!CombatManager.Instance.IsPlayerReadyToEndTurn(player))
+            return "NotReady";
+        if (player.Creature.CombatState == null)
+            return "NoCombatState";
+
+        return null;
     }
 
     private static Dictionary<string, object?> BuildMultiplayerMapState(RunState runState)

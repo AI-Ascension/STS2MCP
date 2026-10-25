@@ -136,11 +136,9 @@ public static partial class McpMod
             var profileRoot = $"profile{i}";
             try
             {
-                var path = ProgressSaveManager.GetProgressPathForProfile(i);
-                var resolvedPath = ResolveProfileProgressPath(i);
-                profileData["has_data"] = resolvedPath != null && File.Exists(resolvedPath);
-                profileData["path"] = path;
-                profileData["resolved_path"] = resolvedPath;
+                path = GetProfileProgressPath(i);
+                resolvedPath = ResolveProfileProgressPath(i);
+                profileRoot = GetProfileRootFromProgressPath(path, i);
             }
             catch
             {

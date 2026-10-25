@@ -23,39 +23,39 @@ public static partial class McpMod
 
         if (string.IsNullOrWhiteSpace(query))
         {
-            SendError(response, 400, "query is required; wiki search does not return the full profile catalog.");
+            SendError(response, 400, "query is required; wiki search does not return the full profile catalog.", "missing_query");
             return;
         }
 
         try
         {
             var dataTask = RunOnMainThread(() => BuildWikiSearch(query, itemType, limit));
-            SendJson(response, dataTask.GetAwaiter().GetResult());
+            SendReadResultJson(response, dataTask.GetAwaiter().GetResult());
         }
         catch (Exception ex)
         {
-            SendError(response, 500, $"Failed to search wiki: {ex.Message}");
+            SendError(response, 500, $"Failed to search wiki: {ex.Message}", "wiki_search_failed");
         }
     }
 
     internal static object SearchWiki(string query, string itemType = "all", int? limit = null)
     {
         if (string.IsNullOrWhiteSpace(query))
-            return Error("query is required; wiki search does not return the full profile catalog.");
+            return Error("query is required; wiki search does not return the full profile catalog.", "missing_query");
 
         return BuildWikiSearch(query, itemType, NormalizeWikiLimit(limit ?? DefaultWikiSearchLimit));
     }
 
     private static Dictionary<string, object?> BuildWikiSearch(string query, string itemType, int limit)
     {
+        var normalizedItemType = NormalizeWikiItemType(itemType);
+        if (normalizedItemType == null)
+            return Error("item_type must be one of: all, card, relic.", "invalid_item_type");
+
         var progress = SaveManager.Instance?.Progress;
         var saveManager = SaveManager.Instance;
         if (progress == null || saveManager == null)
-            return Error("No profile data available.");
-
-        var normalizedItemType = NormalizeWikiItemType(itemType);
-        if (normalizedItemType == null)
-            return Error("item_type must be one of: all, card, relic.");
+            return Error("No profile data available.", "profile_data_unavailable");
 
         var discoveredCards = progress.DiscoveredCards
             .Select(id => id.Entry)

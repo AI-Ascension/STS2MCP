@@ -69,7 +69,7 @@ A successful response looks like:
   "kind": "api_index",
   "version": "0.4.0",
   "bound_prefixes": ["http://localhost:15526/", "http://127.0.0.1:15526/"],
-  "endpoint_count": 16,
+  "endpoint_count": 17,
   "endpoints": [
     { "method": "GET", "path": "/api/v1/singleplayer" },
     { "method": "POST", "path": "/api/v1/singleplayer" },
@@ -79,6 +79,7 @@ A successful response looks like:
     { "method": "GET", "path": "/api/v1/profile" },
     { "method": "GET", "path": "/api/v1/compendium" },
     { "method": "GET", "path": "/api/v1/bestiary" },
+    { "method": "GET", "path": "/api/v1/wiki" },
     { "method": "GET", "path": "/api/v1/glossary/cards" },
     { "method": "GET", "path": "/api/v1/glossary/relics" },
     { "method": "GET", "path": "/api/v1/glossary/potions" },

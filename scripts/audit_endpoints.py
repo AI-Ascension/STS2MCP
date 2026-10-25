@@ -26,6 +26,7 @@ EXPECTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET", "/api/v1/profile"),
     ("GET", "/api/v1/compendium"),
     ("GET", "/api/v1/bestiary"),
+    ("GET", "/api/v1/wiki"),
     ("GET", "/api/v1/glossary/cards"),
     ("GET", "/api/v1/glossary/relics"),
     ("GET", "/api/v1/glossary/potions"),
@@ -270,10 +271,14 @@ def audit_docs(repo: Path) -> None:
         path_pos = mcp_mod.find(f'path == "{path}"')
         if path_pos == -1:
             fail(f"could not locate route block for {method} {path}")
-        next_pos = mcp_mod.find("else if (path ==", path_pos + 1)
-        block = mcp_mod[path_pos: next_pos if next_pos != -1 else mcp_mod.find("else\n", path_pos)]
+        # Match the next route-level branch, not the inner unsupported-method
+        # else in the last route (which would truncate its fallback).
+        next_route = re.search(r"\n {12}else(?: if|\n)", mcp_mod[path_pos:])
+        block = mcp_mod[path_pos: path_pos + next_route.start() if next_route else len(mcp_mod)]
         if f'request.HttpMethod == "{method}"' not in block:
             fail(f"HTTP route table missing {method} handling for {path}")
+        if "SendMethodNotAllowed(response)" not in block:
+            fail(f"HTTP route table missing structured method_not_allowed fallback for {path}")
 
     for required_fragment in [
         "status/kind envelope and active-run context",
@@ -284,7 +289,7 @@ def audit_docs(repo: Path) -> None:
         if required_fragment not in mcp_mod:
             fail(f"root endpoint index missing response-context description: {required_fragment}")
 
-    for required_fragment in ['"kind": "api_index"', '"version": "0.4.0"', '"endpoint_count": 16']:
+    for required_fragment in ['"kind": "api_index"', '"version": "0.4.0"', '"endpoint_count": 17']:
         if required_fragment not in readme:
             fail(f"README root endpoint example missing API index field: {required_fragment}")
     for method, path in EXPECTED_ENDPOINTS:
@@ -348,6 +353,7 @@ def audit_action_surface(repo: Path) -> None:
         "_compendium_get",
         "_settings_get",
         "_bestiary_get",
+        "_wiki_get",
         "_glossary_get",
         "_root_get",
     }
@@ -862,10 +868,28 @@ def audit_static_save_roots(repo: Path) -> None:
     if not match:
         fail("could not locate EnumerateSaveRoots for save-root audit")
     body = match.group(0)
-    if "accountRoots.Count == 1" in body or "yielded.Count > 0" in body:
-        fail("save-root fallback must search all Steam account roots after the active account")
+    # Identity is a safety boundary, not a search preference. The compiled fixture
+    # suite scripts/test_save_roots.py verifies these guards behaviorally.
+    if "identities.Count != 1" not in body or "GetActiveSteamId()" not in body:
+        fail("save-root discovery must fail closed for ambiguous account identity")
     if "Directory.GetDirectories(steamRoot)" not in body:
-        fail("save-root fallback must enumerate Steam account directories")
+        fail("unknown-identity discovery must inspect account directories before choosing one identity")
+    for method, following in [
+        ("FindRunHistoryDirectory", "GetProfileRootFromProgressPath"),
+        ("ResolveCurrentRunPath(string?", "GetSaveDirectoryFromProgressPath"),
+    ]:
+        start = compendium.index("    private static string? " + method)
+        end = compendium.index("    private static ", start + 15)
+        method_body = compendium[start:end]
+        if "Path.IsPathRooted(" not in method_body:
+            fail(f"{method} must not fall back from an authoritative absolute progress path")
+    snapshots = (repo / "McpMod.Snapshots.cs").read_text(encoding="utf-8")
+    start = snapshots.index("    private static string? ResolveRunSavePath(")
+    end = snapshots.index("    private static string GetSnapshotRoot()", start)
+    if "Path.IsPathRooted(progressPath)" not in snapshots[start:end]:
+        fail("snapshot source/restore must not fall back from an authoritative absolute path")
+    if not (repo / "scripts" / "test_save_roots.py").exists():
+        fail("compiled account-isolation regression fixtures are required")
 
     compendium_response_match = re.search(
         r"private static object BuildCompendiumResponse\(.*?\n    private sealed class CompendiumSnapshot",
@@ -928,7 +952,7 @@ def audit_static_save_roots(repo: Path) -> None:
         for required_fragment in ["progress_path", "resolved_progress_path", "profile_root", "save_scope", "current_run"]:
             if required_fragment not in doc_text:
                 fail(f"{doc_name} missing profile/compendium context documentation: {required_fragment}")
-    print("saves: multi-account fallback and profile/compendium context enforced")
+    print("saves: account-isolation guards and profile/compendium context checked; run test_save_roots.py for behavior")
 
 
 def audit_static_snapshots(repo: Path) -> None:
@@ -2225,6 +2249,7 @@ def audit_live(base_url: str) -> None:
         "/api/v1/profile",
         "/api/v1/compendium",
         "/api/v1/bestiary",
+        "/api/v1/wiki",
         "/api/v1/glossary/cards",
         "/api/v1/glossary/relics",
         "/api/v1/glossary/potions",
